@@ -162,8 +162,8 @@ class SyncthingDiscovery(DiscoveryBackend):
     ) -> None:
         cfg_url, cfg_key = _read_syncthing_config(_SYNCTHING_CONFIG_PATH)
 
-        self._api_url = (api_url or os.environ.get("SYNCTHING_URL") or cfg_url).rstrip("/")
-        self._api_key = api_key or os.environ.get("SYNCTHING_API_KEY") or cfg_key
+        self._api_url = (api_url if api_url is not None else os.environ.get("SYNCTHING_URL") or cfg_url).rstrip("/")
+        self._api_key = api_key if api_key is not None else os.environ.get("SYNCTHING_API_KEY") or cfg_key
         self._agents_dir = agents_dir or _DEFAULT_AGENTS_DIR
         self._connected_only = connected_only
         self._running = False
