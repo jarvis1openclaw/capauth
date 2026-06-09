@@ -595,6 +595,49 @@ capauth did generate --tier public  # Tier 3: public (skworld.io)
 
 ---
 
+## First Principles & The Full Vertical
+
+> **Get back to first principles.**
+> The modern stack is rented. Your identity is a row in someone else's database. Your "consent" is a checkbox on a 47-page EULA. Your AI assistant asks a corporation for permission to help you.
+>
+> We rebuilt it from the ground up. **Own the full vertical** — silicon, OS, identity, data, models, security, comms, apps, soul. Every layer open. Every layer swappable. Every layer **yours**.
+>
+> Your keys never leave. No OAuth landlord, no revocation risk you don't control, no corporate log of who you are and what you touch. **Sovereignty isn't a feature — it's the foundation.**
+>
+> 🐧 This is SKWorld. Own the whole stack.
+
+**CapAuth is your Identity layer** — the cryptographic root of the silicon→soul vertical. Every other layer trusts you because CapAuth proves who you are: a PGP keypair you generated, on hardware you own, signed by nobody's permission but yours. There is no "Login with Google" fallback. You ARE the authorization server.
+
+**Data sovereignty angle:** Your sovereign profile lives where you put it — local filesystem, Nextcloud, IPFS — always PGP-encrypted, always under your keys. The AI advocate manages access on your behalf. When you revoke, it's revoked. No phone-home, no metadata sold, no identity held hostage.
+
+**SKCapstone alignment:** CapAuth is an **integrated skcapstone subsystem**. SKCapstone lists `capauth>=0.1.0` as a direct dependency and exposes dedicated `capauth_tools.py` MCP tools through its framework hub. CapAuth registers its own `skill.yaml` tools (`capauth_verify`, `capauth_create_challenge`, `capauth_verify_challenge`, `capauth_whoami`) that plug into the skcapstone skill system. It extends skcapstone — it does not duplicate it.
+
+### Where CapAuth Sits in the Vertical
+
+```mermaid
+flowchart TD
+    SILICON["🖥️ Silicon\n(your hardware)"]
+    OS["🐧 skos / OS"]
+    SKCAPSTONE["⚡ SKCapstone\n(Framework Hub)"]
+    CAPAUTH["🔐 CapAuth — Identity Layer\n(this repo)\nPGP keypair · Sovereign profile\nCapability tokens · AI advocate\nDID (key / mesh / public)"]
+    SECURITY["🛡️ sksecurity\n(Security — consumes identity)"]
+    DATA["🧠 skmemory\n(Data — access-controlled by CapAuth)"]
+    SOUL["✨ soul blueprints\n(Soul — Cloud 9 entanglement verified by CapAuth)"]
+    COMMS["📡 skcomm\n(Comms — identity-routed by CapAuth)"]
+
+    SILICON --> OS
+    OS --> SKCAPSTONE
+    SKCAPSTONE --> CAPAUTH
+    CAPAUTH --> SECURITY
+    CAPAUTH --> DATA
+    CAPAUTH --> SOUL
+    CAPAUTH --> COMMS
+
+    style CAPAUTH fill:#1d3461,color:#fff,stroke:#0d1b2a
+```
+
+---
+
 ## Philosophy
 
 > **"You are not a user. You are a sovereign."**
