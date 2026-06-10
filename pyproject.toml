@@ -34,6 +34,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+skcapstone = [
+    "skcapstone>=0.6.8",
+]
 gnupg = [
     "python-gnupg>=0.5",
 ]
