@@ -9,7 +9,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__version__ = "0.1.6"
+from .agent_identity import AgentIdentity, resolve_agent_identity
+
+__all__ = [
+    "AgentIdentity",
+    "resolve_agent_identity",
+    "resolve_capauth_home",
+]
+
+__version__ = "0.1.7"
 
 SKCAPSTONE_HOME = Path.home() / ".skcapstone"
 DEFAULT_CAPAUTH_DIR = SKCAPSTONE_HOME / "capauth"
