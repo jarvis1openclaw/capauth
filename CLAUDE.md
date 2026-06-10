@@ -81,6 +81,36 @@ Security invariants enforced in `did.py`:
 - Tier 3: Cloudflare KV via `scripts/publish-did.sh` →
   `did:web:ws.weblink.skworld.io:agents:<slug>`
 
+## Unified Identity Resolver (the source of truth)
+
+CapAuth owns the **single canonical agent-aware identity resolver**. Every SK
+package (skchat, skcomms, skmemory, skcapstone) delegates here instead of
+reimplementing identity logic (epic `2b264064`).
+
+```python
+from capauth import resolve_agent_identity   # re-exported for convenience
+
+ident = resolve_agent_identity("lumina")     # None → resolves active agent via SKAGENT
+ident.capauth_uri   # 'capauth:lumina@skworld.io'   (wire identity — always present)
+ident.fqid          # 'lumina@chef.skworld'         (agent@operator.realm — from cluster.json)
+ident.fingerprint   # 40-char PGP fp from the agent's CapAuth profile (None if placeholder)
+```
+
+Implementation: `src/capauth/agent_identity.py` (`resolve_agent_identity`,
+`AgentIdentity`). The **dual URI** bridges two namespaces:
+
+- `capauth_uri` — `capauth:<agent>@skworld.io`, the wire identity used by the
+  peer registry, bridge scripts, and skchat transport. Always derivable.
+- `fqid` — `<agent>@<operator>.<realm>`, the skcomms three-tier sovereign
+  address, read from `~/.skcapstone/cluster.json` (`realm`/`operator`).
+
+**Operator vs agents:** the shared `~/.skcapstone/identity/identity.json` holds
+the **operator** identity (`role: operator`); each agent's wire identity
+resolves per-agent. No identity carries an `@capauth.local` placeholder. Run
+`skcapstone doctor` — the `identity:*` checks (resolver importable, self resolves
+agent-aware, shared=operator, no placeholders, per-agent files present) lock this
+invariant in (skos T6 `0bac4f62`).
+
 ## Key Identities
 
 | Identity | Type | Role |
