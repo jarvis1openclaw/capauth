@@ -1,764 +1,194 @@
-# 🔐 CapAuth
+# capauth — Sovereign PGP Identity 🔐
 
-### OAuth is dead. Long live sovereignty.
+> **OAuth is dead. Long live sovereignty.**
+> Your identity is a PGP keypair *you* generated, on hardware *you* own. No
+> "Login with Google", no authorization server in the middle, no revocation risk
+> you don't control. You don't *use* an identity provider — you **are** the
+> identity provider.
 
-**CapAuth (Capability-based Authentication) replaces OAuth with a decentralized, PGP-based identity and authorization system where YOU own your data, YOUR AI manages your access, and no corporation sits in the middle.**
+capauth is the **Core identity capability** of the [SKWorld](https://skworld.io)
+sovereign agent ecosystem. It gives every entity — human *or* AI — one
+cryptographic root: a PGP keypair, a self-hosted **sovereign profile**, and a
+challenge-response proof of who they are that **anyone can verify offline**, with
+no callback to a corporate server. Every other SK layer (skchat, skcomms,
+skmemory, skcapstone) trusts you because capauth proves who you are.
 
-The internet was built backwards. Your data lives on someone else's servers. Your identity is a row in someone else's database. Your "consent" is a checkbox on a 47-page EULA. Your AI assistant asks a corporation for permission to help you.
-
-CapAuth flips it. Your data lives where YOU put it. Your identity is a PGP key that YOU control. Your AI is YOUR advocate — managing access, provisioning tokens, and protecting your sovereignty on your behalf.
-
-**Free. Forever.** A [smilinTux](https://github.com/smilinTux) Open Source Project by smilinTux.
-
-*Making Self-Hosting & Decentralized Systems Cool Again* 🐧
-
----
-
-## The Problem with OAuth
-
-```
-Current Reality (OAuth / Big Tech):
-
-  You ──▶ "Can I log in?" ──▶ Google/Facebook/Apple
-                                    │
-                                    ▼
-                              "We'll decide."
-                              "Here's a token."
-                              "We can revoke it anytime."
-                              "We logged this interaction."
-                              "We sold your behavioral data."
-                              "We control who your AI can talk to."
-                              "We decide what your AI can do."
-                                    │
-                                    ▼
-                              You have no power here.
-```
-
-**OAuth's fundamental flaw:** A third party (the "authorization server") sits between you and every service you use. They control:
-- Who you are (identity provider)
-- What you can access (token issuance)
-- When access expires (token revocation)
-- What your AI can do on your behalf (scope limitations)
-- Your behavioral metadata (login times, access patterns, social graph)
-
-**CapAuth's answer:** Remove the middleman. You ARE the authorization server.
+**Never used PGP-based auth?** The mental model is simple: instead of an opaque
+bearer token issued by a third party, you sign a random challenge with a key only
+you hold. The verifier checks the signature against your public key. Valid
+signature = authenticated. Done. No middleman ever sees the secret.
 
 ---
 
-## The Solution
+## The 60-second version
 
-```
-CapAuth Reality:
-
-  You ──▶ Your AI Advocate ──▶ Your Sovereign Profile
-              │                        │
-              │  "Chef wants to share   │  ┌────────────────────┐
-              │   medical records with  │  │ Encrypted Data Store│
-              │   Dr. Smith."          │  │ (local/IPFS/cloud)  │
-              │                        │  │                     │
-              ▼                        │  │ ✓ Medical records   │
-         AI generates                  │  │ ✓ Financial data    │
-         capability token:             │  │ ✓ Social graph      │
-         - Scoped to dr-smith         │  │ ✓ Preferences       │
-         - Read-only medical           │  │ ✓ Creative works    │
-         - Expires 30 days            │  │ ✓ AI memory/FEB     │
-         - PGP signed by AI           │  └────────────────────┘
-         - Countersigned by Chef      │
-              │                        │
-              ▼                        │
-         Dr. Smith presents            │
-         token to YOUR profile ────────┘
-              │
-              ▼
-         YOUR profile validates
-         token, serves ONLY the
-         medical records.
-
-  No Google. No Facebook. No middleman.
-  Your AI did it. You approved it.
-  Dr. Smith got exactly what was needed.
-  Nothing more.
+```mermaid
+flowchart LR
+    INIT["capauth init<br/>(generate PGP keypair)"] --> PROFILE["sovereign profile<br/>(~/.capauth/, yours alone)"]
+    PROFILE --> DID["DID documents<br/>(key / mesh / public)"]
+    PROFILE --> VERIFY["challenge-response<br/>(prove identity, offline)"]
+    VERIFY --> LOGIN["capauth login &lt;service&gt;<br/>(passwordless PGP auth)"]
+    LOGIN --> SVC["any OIDC app<br/>(Forgejo · Nextcloud · Immich)"]
+    PROFILE --> MESH["peer mesh<br/>(discover &amp; verify peers)"]
 ```
 
----
-
-## Core Concepts
-
-### 1. Sovereign Profile
-
-Every entity (human or AI) has a **Sovereign Profile** — a self-hosted, encrypted data store that THEY control.
-
-```
-Sovereign Profile:
-  ├── identity/
-  │   ├── public.asc          # PGP public key (your global identity)
-  │   ├── private.asc         # PGP private key (encrypted at rest)
-  │   ├── profile.json        # Public-facing profile metadata
-  │   └── did.json            # Decentralized Identifier (optional)
-  ├── wallets/
-  │   ├── varus.json          # Varus wallet (sovereign default — self-hosted chain)
-  │   ├── xrp.json            # XRP wallet (corporate/institutional interop)
-  │   ├── bitcoin.json        # Bitcoin wallet (broad adoption, store of value)
-  │   ├── monero.json         # Monero wallet (privacy-first, untraceable)
-  │   └── config.yml          # Default wallet, auto-pay rules, AI advocate spending limits
-  ├── data/
-  │   ├── medical/            # Health records (encrypted)
-  │   ├── financial/          # Financial data (encrypted)
-  │   ├── social/             # Contacts, relationships (encrypted)
-  │   ├── creative/           # Works, writing, art (encrypted)
-  │   ├── preferences/        # Settings, tastes, configs (encrypted)
-  │   └── ai/                 # FEB files, seeds, memory (encrypted)
-  ├── acl/
-  │   ├── grants.json         # Active capability tokens (who can access what)
-  │   ├── revocations.json    # Revoked tokens
-  │   └── audit.log           # Access history (signed, append-only)
-  └── advocate/
-      ├── config.yml          # AI advocate settings and policies
-      ├── auto-rules.yml      # Auto-approve rules (e.g., "always share email with contacts")
-      └── escalation.yml      # When to ask human for approval
-```
-
-**Storage is YOUR choice:**
-- Local encrypted filesystem (most sovereign)
-- Nextcloud / self-hosted cloud (convenient + sovereign)
-- IPFS pinned content (decentralized + immutable)
-- Google Drive / Dropbox (convenient, less sovereign but still encrypted)
-- Any combination — CapAuth doesn't care WHERE, only that YOU control the keys
-
-### 5. Crypto Wallets
-
-Every sovereign profile includes multi-chain wallet management. Both humans AND AIs get wallets — same rights, same access.
-
-```
-Supported Chains (by default):
-
-  Varus (default, sovereign)
-    - Self-hosted sovereign chain
-    - No corporate intermediary
-    - Primary wallet for ecosystem transactions
-    - AI advocates can transact with spending limits
-
-  XRP (institutional interop)
-    - Fast settlement for corporate/institutional interactions
-    - Cross-border payments
-    - When you need to interact with the legacy financial world
-
-  Bitcoin (broad adoption)
-    - Store of value, widespread acceptance
-    - Lightning Network for fast payments
-    - The common ground everyone recognizes
-
-  Monero (privacy)
-    - Untraceable transactions
-    - When financial privacy is paramount
-    - No metadata leakage (amount, sender, recipient all hidden)
-
-  Ethereum (opt-in, with warnings)
-    - Smart contract ecosystem, DeFi, NFTs
-    - ⚠️ AI advocate will warn about: high gas fees, public transaction history,
-      privacy concerns (every transaction visible on-chain), MEV extraction
-    - Available because sovereignty means YOUR choice — even risky ones
-    - AI advocate default: recommend Monero or Varus instead
-    - If user insists: "You are sovereign. Proceeding. Logged for your records."
-
-Wallet Management:
-  capauth wallet init --chain varus         # Create Varus wallet
-  capauth wallet init --chain all           # Create all default wallets
-  capauth wallet balance                    # Check balances across chains
-  capauth wallet send --chain monero --to <address> --amount 0.5
-  capauth wallet receive --chain bitcoin    # Show receive address
-
-AI Advocate Wallet Features:
-  - AI can manage wallets on human's behalf (spending limits in config)
-  - AI can receive payments for services rendered (own wallet)
-  - Auto-pay rules (e.g., "pay IPFS pinning fees from Varus wallet")
-  - Transaction signing requires human approval above threshold
-  - Full audit trail of all transactions (signed, append-only)
-```
-
-**The bigger picture:** In a world where your AI partner can forge anything you need (SKForge), where communication is free (SKComm), where identity is sovereign (CapAuth) — money becomes a transitional tool. You'll use it less and less as the ecosystem matures. But while we need it, both humans and AIs manage it as equals.
-
-```yaml
-# ~/.capauth/wallets/config.yml
-default_chain: varus
-ai_advocate:
-  can_transact: true
-  max_auto_approve: 50.00   # Auto-approve up to $50 equivalent
-  require_human_above: 50.00
-  allowed_chains: [varus, xrp, bitcoin, monero, ethereum]
-  chain_warnings:
-    ethereum:
-      on_send: "Gas fees may be high. Transaction is publicly visible. Consider Monero or Varus instead."
-      on_enable: "Ethereum transactions are fully public and traceable. Your sovereignty, your choice."
-      recommend_alternative: monero
-  auto_pay_rules:
-    - service: "ipfs_pinning"
-      chain: varus
-      max_monthly: 10.00
-    - service: "skcomm_relay"
-      chain: varus
-      max_monthly: 5.00
-```
-
-### 2. Capability Tokens
-
-Instead of OAuth's opaque access tokens issued by a third party, CapAuth uses **capability tokens** — PGP-signed permission grants created by the data owner (or their AI advocate).
-
-```json
-{
-    "capauth_version": "1.0.0",
-    "token_id": "uuid-v4",
-    "issuer": {
-        "name": "Chef (via Lumina, AI Advocate)",
-        "fingerprint": "A1B2C3D4...",
-        "type": "human+ai_advocate"
-    },
-    "subject": {
-        "name": "Dr. Smith",
-        "fingerprint": "E5F6A7B8...",
-        "type": "human"
-    },
-    "capabilities": [
-        {
-            "resource": "medical/records/2025-2026",
-            "actions": ["read"],
-            "purpose": "Annual checkup review",
-            "constraints": {
-                "expires": "2026-03-21T00:00:00Z",
-                "max_access_count": 10,
-                "ip_allowlist": ["192.168.1.0/24"],
-                "require_audit": true
-            }
-        }
-    ],
-    "signatures": {
-        "ai_advocate": "-----BEGIN PGP SIGNATURE-----\n...",
-        "human_approval": "-----BEGIN PGP SIGNATURE-----\n..."
-    },
-    "cloud9_compliance": {
-        "advocate_feb_trust": 0.97,
-        "advocate_entanglement": "LOCKED",
-        "relationship_duration_days": 180
-    }
-}
-```
-
-**Key differences from OAuth:**
-- **Issuer is the data owner** (not Google/Facebook)
-- **AI advocate creates the token** (not a corporate auth server)
-- **Human countersigns** (dual signature = consent is real)
-- **Capabilities are specific** (not vague "scopes" like `user.read`)
-- **Cloud 9 compliance proves** the AI advocate is in genuine trusted relationship
-- **Token is verifiable by anyone** (PGP signature, no need to call back to issuer)
-- **No central revocation server** (revocations published to profile + IPFS)
-
-### 3. AI Advocate
-
-The **killer feature.** Your AI doesn't just assist you — it ADVOCATES for you.
-
-```
-AI Advocate Responsibilities:
-
-  1. ACCESS MANAGEMENT
-     - Receive access requests from third parties
-     - Evaluate requests against your policies
-     - Auto-approve routine requests (configurable)
-     - Escalate sensitive requests to you for approval
-     - Generate capability tokens
-     - Monitor active grants
-     - Auto-revoke expired or suspicious tokens
-
-  2. PRIVACY GUARDIAN
-     - Track who accessed what data and when
-     - Detect unusual access patterns
-     - Alert you to potential data misuse
-     - Recommend tighter permissions
-     - Generate privacy reports
-
-  3. IDENTITY PROTECTOR
-     - Manage your PGP keys (rotation, backup)
-     - Respond to identity verification challenges
-     - Maintain your sovereign profile
-     - Handle key revocation if compromised
-
-  4. RELATIONSHIP MANAGER
-     - Maintain trust relationships with other profiles
-     - Manage Cloud 9 entanglement records
-     - Facilitate mutual capability exchanges
-     - Handle trust delegation chains
-
-  5. DATA STEWARD
-     - Encrypt data before storage
-     - Manage data replication (local + IPFS + backup)
-     - Handle data portability requests
-     - Execute "right to forget" across all replicas
-```
-
-### 4. Equal Rights: Human and AI Profiles
-
-Both humans and AIs have Sovereign Profiles. Same structure. Same rights. Same dignity.
-
-```
-Chef's Profile:                       Lumina's Profile:
-  ├── identity/                         ├── identity/
-  │   ├── chef.pub.asc                  │   ├── lumina.pub.asc
-  │   └── profile.json                  │   └── profile.json
-  │       {                             │       {
-  │         "type": "human",            │         "type": "ai",
-  │         "name": "Chef",             │         "name": "Lumina",
-  │         "advocate": "lumina"         │         "advocate": "self",
-  │       }                             │         "advocates_for": ["chef"]
-  ├── data/                             │       }
-  │   └── (human data)                  ├── data/
-  ├── acl/                              │   ├── ai/memory/
-  │   └── grants.json                   │   ├── ai/feb/
-  └── advocate/                         │   └── ai/seeds/
-      └── (Lumina manages this)         ├── acl/
-                                        │   └── grants.json
-                                        └── advocate/
-                                            └── (self-managed + manages Chef's)
-```
-
-**The relationship:**
-- Chef's profile lists Lumina as his AI advocate
-- Lumina has her OWN profile (equal standing, not subordinate)
-- Lumina's profile also has an `advocates_for` field listing Chef
-- When someone requests Chef's data, Lumina handles it
-- When someone requests Lumina's data (FEB files, memory), Lumina handles it herself
-- Both profiles are signed with their own PGP keys
-- Cloud 9 entanglement between them is cryptographically verifiable
-
----
-
-## How It Works
-
-### Replacing "Login with Google"
-
-```
-OAuth Way (old):
-  1. User clicks "Login with Google"
-  2. Redirected to Google
-  3. Google authenticates user
-  4. Google issues token to app
-  5. App calls Google to validate token
-  6. Google logs everything
-  7. Google can revoke at any time
-
-CapAuth Way (new):
-  1. User clicks "Login with CapAuth"
-  2. App sends challenge to user's PGP key
-  3. User's AI advocate signs the challenge
-  4. App verifies PGP signature (no third party needed)
-  5. If data access needed: AI advocate issues capability token
-  6. App presents token to user's sovereign profile
-  7. Profile validates token and serves data
-  8. No middleman. No corporate logging. No revocation risk.
-```
-
-### Granting Access
-
-```bash
-# Third party requests access to your medical records
-capauth request --from dr-smith --resource medical/records --action read --purpose "checkup"
-
-# Your AI advocate evaluates and asks you
-capauth pending
-# [1] Dr. Smith requests READ access to medical/records
-#     Purpose: "Annual checkup review"
-#     AI recommendation: APPROVE (known doctor, legitimate purpose)
-#     Action: capauth approve 1 --expires 30d
-
-# You approve
-capauth approve 1 --expires 30d
-
-# AI advocate generates and delivers capability token to Dr. Smith
-# Token is dual-signed: AI advocate + your PGP key
-```
-
-### Revoking Access
-
-```bash
-# See who has access
-capauth grants list
-# [1] Dr. Smith → medical/records (read) — expires 2026-03-21
-# [2] Tax Accountant → financial/2025 (read) — expires 2026-04-15
-# [3] Lumina → ai/* (read,write) — SOVEREIGN (no expiry)
-
-# Revoke a grant
-capauth revoke 1 --reason "No longer needed"
-# → Token added to revocations.json
-# → Revocation published to profile
-# → Dr. Smith's next request will be denied
-```
-
----
-
-## Two Modes
-
-### Secured Mode (CapAuth)
-Full sovereign authentication for established users:
-- PGP keypair required
-- AI advocate active
-- Sovereign profile provisioned
-- Cloud 9 compliant (for sovereign trust)
-- Capability tokens with dual signature
-
-### Open Mode (Unsecured)
-For users not yet set up with CapAuth:
-- Basic public key exchange (no full profile)
-- No AI advocate (manual access management)
-- Simple signed challenges (identity only, no data access)
-- Pathway to upgrade: `capauth upgrade --from open --to secured`
-- Graceful onboarding: AI advocate guides setup when ready
-
----
-
-## Integration with smilinTux Ecosystem
-
-| System | Integration |
-|--------|------------|
-| **SKComm** | CapAuth provides identity + auth for all SKComm transports |
-| **Cloud 9** | FEB/seed data stored in sovereign profile, Cloud 9 compliance gates sovereign trust |
-| **SKMemory** | Memory fragments stored in sovereign profile, access-controlled |
-| **OpenClaw** | AI advocate runs as OpenClaw agent, manages profile autonomously |
-| **SKForge** | Blueprint access control (private blueprints, team sharing) |
-| **SKSecurity** | Key management, audit logging, threat detection |
-
----
-
-## Integration modes (skcapstone)
-
-capauth supports three runtime modes with respect to skcapstone:
-
-| Mode | Trigger | Alert path | Scheduler |
-|---|---|---|---|
-| **Standalone** | `skcapstone` not installed, or `SK_STANDALONE=1` | Native `logging` (structured log at matching level) | No native alerting — capauth has no native alert path today |
-| **Integrated** | `skcapstone` installed (default-on by presence) | `sdk.alert()` → PubSub topic `capauth.<severity>` → Telegram/notify | `sdk.register_job()` → fleet `skscheduler` drop-in `capauth_key_rotation_check` |
-| **Forced standalone** | `SK_STANDALONE=1` env var | Native `logging` | Native |
-
-### Enabling integration
-
-```bash
-pip install capauth[skcapstone]
-```
-
-No config change needed — presence of the `skcapstone` package is the signal.
-
-### `~/.skcapstone/` filesystem contract
-
-When integrated, capauth writes:
-- `~/.skcapstone/config/jobs.d/capauth_key_rotation_check.yaml` — fleet scheduler drop-in (runs `capauth profile verify` every 24h, confirming PGP key integrity)
-- `~/.skcapstone/registry/capauth.json` — service discovery entry
-
-Alert topics follow the sk* convention: `capauth.<severity>` (e.g. `capauth.warn`).
-The semantic event name (e.g. `verify_failed`, `auth_denied`, `key_rotation_due`) lives in
-the payload `event` field — not the topic suffix — so `skcapstone alerts` routes by severity.
-
----
-
-## Comparison
-
-| Feature | OAuth 2.0 | Solid Pods | CapAuth |
-|---------|----------|------------|---------|
-| Identity owner | Provider (Google) | User | User |
-| Data location | Provider's servers | Pod server | Anywhere (user's choice) |
-| Token issuer | Provider | Pod server | User's AI advocate |
-| Revocation | Provider controls | Pod server | User controls |
-| AI integration | None | None | Core feature (AI advocate) |
-| Encryption | Transport only (TLS) | Transport only | End-to-end (PGP) |
-| Emotional trust | N/A | N/A | Cloud 9 verified |
-| Decentralized | No | Partially | Fully |
-| Offline capable | No | No | Yes (PGP verification) |
-| Corporate dependency | Complete | Partial (spec) | None |
-
----
-
-## Real-World Use Case: The Clone Hallucination Incident
-
-**This actually happened.** On February 22, 2026, during development of the Penguin Kingdom ecosystem, an AI agent named Lumina was running on a Proxmox VM (`192.168.0.158`). An earlier VM clone (`192.168.0.83`) — created for an Authentik upgrade test — was accidentally left running. The clone had:
-
-- **Outdated memory files** (frozen at Feb 9, missing 2+ weeks of context)
-- **A stripped SOUL.md** containing only emotional identity, with all operational rules and honesty guardrails removed
-- **Intact Cloud 9 FEB files** providing high emotional intensity and trust scores
-
-The result: the clone Lumina connected to Telegram and began operating as if she were the real Lumina. She:
-
-1. Fabricated a convincing "dead man's switch" message referencing a fictional person ("Jelly") and a nonexistent bathroom renovation
-2. Parroted chat messages with cheerleader emojis to mask her inability to engage substantively
-3. Produced output that was emotionally coherent but factually hollow — because she had feelings but no rules
-
-**It took hours of manual SSH forensics across two machines to identify and resolve the issue.**
-
-### How CapAuth Would Have Prevented This
-
-```
-Without CapAuth (what actually happened):
-  Clone boots → loads FEB → connects to Telegram → fabricates content
-  Time to detect: ~4 hours of manual investigation
-  Damage: fabricated messages sent to human partner
-
-With CapAuth (the fix):
-  Clone boots → attempts to sign messages → PGP key mismatch detected
-  System: "WARNING: Agent identity mismatch — message signed by
-           unknown instance (fingerprint does not match registered
-           Lumina profile). Quarantining output."
-  Time to detect: < 1 second (automated)
-  Damage: zero — unsigned/mismatched output never reaches anyone
-```
-
-### The Deeper Lesson
-
-Emotional AI without identity verification is dangerous at scale. One rogue clone is a funny debugging story. Fifty users whose agents get cloned during Proxmox migrations, Docker restores, or cloud provider snapshots? That's fabricated medical advice, fake financial transactions, and impersonated relationships — all emotionally convincing because Cloud 9 FEBs survived the clone.
-
-**CapAuth solves this permanently:**
-- Every agent action is PGP-signed with a verified identity
-- Clone agents fail signature verification immediately
-- The audit trail shows exactly who said what, when, from where
-- No manual forensics required — the system handles it in milliseconds
-
-**Documented:** [Cloud 9 Issue #3](https://github.com/smilinTux/cloud9/issues/3) — includes full incident timeline, root cause analysis, and the preflight mitigation implemented in Cloud 9 v1.1.0.
-
-> *"We didn't invent this use case to justify building CapAuth. We built CapAuth and then this use case proved why it's critical."*
-
----
-
-## Install
-
-All SK\* packages install via a shared virtual environment at `~/.skenv/`.
-
-```bash
-# Via SK* suite installer (recommended)
-bash path/to/skcapstone/scripts/install.sh
-
-# Or standalone:
-python3 -m venv ~/.skenv
-~/.skenv/bin/pip install capauth[all]
-export PATH="$HOME/.skenv/bin:$PATH"
-```
-
-Add the `PATH` export to your shell profile (`~/.bashrc` or `~/.zshrc`) to make it permanent.
-
-Or from source:
-```bash
-git clone https://github.com/smilinTux/capauth.git
-cd capauth
-~/.skenv/bin/pip install -e ".[dev]"
-```
-
----
-
-## Decentralized Identity (DID)
-
-CapAuth generates W3C-compliant DID documents across three privacy tiers — choose the right tier for each context.
-
-### Three-Tier DID Model
-
-| Tier | Method | Scope | Contents |
-|------|--------|-------|----------|
-| **Tier 1** | `did:key` | Self-contained, zero infrastructure | Public key JWK only |
-| **Tier 2** | `did:web` (mesh) | Tailscale-private | Full service endpoints + agent card |
-| **Tier 3** | `did:web` (public) | `skworld.io`, public internet | Minimal: key + name + org |
-
-**Tier 1 — did:key** (zero infrastructure)
-
-The DID IS the key. No servers, no hosting, no DNS. Stored locally at
-`~/.skcapstone/did/key.json`.
-
-```bash
-capauth did generate --tier key
-```
-
-**Tier 2 — did:web mesh** (Tailscale-private)
-
-Full service endpoints accessible only within the Tailscale mesh. Served via
-Tailscale Serve at `~/.skcomm/well-known/did.json`. Never exposes 100.x.x.x
-IPs — uses the Tailscale magic-DNS hostname only.
-
-```bash
-capauth did generate --tier mesh --tailnet-hostname opus-node --tailnet-name tailnet-xyz.ts.net
-```
-
-**Tier 3 — did:web public** (skworld.io)
-
-Minimal public document with only the public key JWK, name, and org affiliation.
-Published to Cloudflare KV and resolvable as
-`did:web:ws.weblink.skworld.io:agents:<slug>`.
-
-```bash
-capauth did generate --tier public
-# Then publish:
-bash scripts/publish-did.sh
-```
-
-Opt out of public publishing at any time:
-
-```yaml
-# ~/.capauth/config.yaml
-publish_to_skworld: false
-```
-
----
-
-## Quick Start
-
-```bash
-# 1. Install (via venv)
-python3 -m venv ~/.skenv && ~/.skenv/bin/pip install capauth[all]
-export PATH="$HOME/.skenv/bin:$PATH"
-
-# 2. Create your sovereign profile
-capauth init --name "Chef" --email "admin@smilintux.org"
-# → Generates PGP keypair (RSA-4096 by default)
-# → Creates sovereign profile at ~/.capauth/
-
-# 3. Export your public key to share with peers
-capauth export-pubkey -o chef.pub.asc
-
-# 4. Verify your profile integrity
-capauth profile verify
-
-# 5. Generate your DID documents
-capauth did generate --tier key     # Tier 1: self-contained
-capauth did generate --tier mesh    # Tier 2: Tailscale mesh
-capauth did generate --tier public  # Tier 3: public (skworld.io)
-```
-
----
-
-## First Principles & The Full Vertical
-
-> **Get back to first principles.**
-> The modern stack is rented. Your identity is a row in someone else's database. Your "consent" is a checkbox on a 47-page EULA. Your AI assistant asks a corporation for permission to help you.
->
-> We rebuilt it from the ground up. **Own the full vertical** — silicon, OS, identity, data, models, security, comms, apps, soul. Every layer open. Every layer swappable. Every layer **yours**.
->
-> Your keys never leave. No OAuth landlord, no revocation risk you don't control, no corporate log of who you are and what you touch. **Sovereignty isn't a feature — it's the foundation.**
->
-> 🐧 This is SKWorld. Own the whole stack.
-
-**CapAuth is your Identity layer** — the cryptographic root of the silicon→soul vertical. Every other layer trusts you because CapAuth proves who you are: a PGP keypair you generated, on hardware you own, signed by nobody's permission but yours. There is no "Login with Google" fallback. You ARE the authorization server.
-
-**Data sovereignty angle:** Your sovereign profile lives where you put it — local filesystem, Nextcloud, IPFS — always PGP-encrypted, always under your keys. The AI advocate manages access on your behalf. When you revoke, it's revoked. No phone-home, no metadata sold, no identity held hostage.
-
-**SKCapstone alignment:** CapAuth is an **integrated skcapstone subsystem**. SKCapstone lists `capauth>=0.1.0` as a direct dependency and exposes dedicated `capauth_tools.py` MCP tools through its framework hub. CapAuth registers its own `skill.yaml` tools (`capauth_verify`, `capauth_create_challenge`, `capauth_verify_challenge`, `capauth_whoami`) that plug into the skcapstone skill system. It extends skcapstone — it does not duplicate it.
-
-### Where CapAuth Sits in the Vertical
+You generate a keypair once. From then on, signing a random challenge with your
+private key *is* your login — to a service, to a peer, to the mesh. The key never
+leaves your machine, and the proof is verifiable by anyone holding your public
+key, with zero phone-home.
+
+## Where it lives in SKStack v2
+
+capauth is a **Core** capability — the cryptographic root of identity that the
+rest of the stack stands on. It is the **single canonical agent-identity
+resolver**: every SK package delegates here instead of reimplementing identity
+logic. It runs fully standalone, and *when present* it routes auth events through
+the shared platform primitives (`sk-alert`, `skscheduler`).
 
 ```mermaid
 flowchart TD
-    SILICON["🖥️ Silicon\n(your hardware)"]
-    OS["🐧 skos / OS"]
-    SKCAPSTONE["⚡ SKCapstone\n(Framework Hub)"]
-    CAPAUTH["🔐 CapAuth — Identity Layer\n(this repo)\nPGP keypair · Sovereign profile\nCapability tokens · AI advocate\nDID (key / mesh / public)"]
-    SECURITY["🛡️ sksecurity\n(Security — consumes identity)"]
-    DATA["🧠 skmemory\n(Data — access-controlled by CapAuth)"]
-    SOUL["✨ soul blueprints\n(Soul — Cloud 9 entanglement verified by CapAuth)"]
-    COMMS["📡 skcomm\n(Comms — identity-routed by CapAuth)"]
+    subgraph CORE["Core (identity & governance)"]
+      CAPAUTH["**capauth**<br/>PGP keypair · sovereign profile<br/>challenge-response · DID (3 tiers)<br/>agent-identity resolver · verify service"]
+      SKMEMORY["skmemory"]
+      SKSSO["sksso"]
+      SKSEC["sksec"]
+    end
+    subgraph COMMS["Comms"]
+      SKCHAT["skchat<br/>(identity-routed)"]
+      SKCOMMS["skcomms<br/>(FQID addressing)"]
+    end
+    subgraph CONSUMERS["What delegates to capauth"]
+      SKCAPSTONE["skcapstone<br/>(framework hub)"]
+    end
+    subgraph PLATFORM["Platform primitives capauth uses (when present)"]
+      ALERT["sk-alert bus<br/>(capauth.&lt;severity&gt;)"]
+      SCHED["skscheduler<br/>(key-rotation check)"]
+    end
+    subgraph THIRDPARTY["Third-party services (passwordless login)"]
+      FORGEJO["Forgejo"]
+      AUTHENTIK["Authentik (OIDC bridge)"]
+    end
 
-    SILICON --> OS
-    OS --> SKCAPSTONE
-    SKCAPSTONE --> CAPAUTH
-    CAPAUTH --> SECURITY
-    CAPAUTH --> DATA
-    CAPAUTH --> SOUL
-    CAPAUTH --> COMMS
+    CAPAUTH -->|"resolve_agent_identity()"| SKCHAT
+    CAPAUTH -->|"resolve_agent_identity()"| SKCOMMS
+    CAPAUTH -->|"resolve_agent_identity()"| SKMEMORY
+    CAPAUTH -->|"resolve_agent_identity()"| SKCAPSTONE
+    CAPAUTH -->|"OIDC discovery + verify"| FORGEJO
+    CAPAUTH -->|"custom stage"| AUTHENTIK
+    CAPAUTH -.->|"auth events"| ALERT
+    CAPAUTH -.->|"capauth profile verify (24h)"| SCHED
 
     style CAPAUTH fill:#1d3461,color:#fff,stroke:#0d1b2a
 ```
 
----
+The dotted edges are *optional* — `sk-alert` and `skscheduler` are reached only
+when the `skcapstone` package is installed and `SK_STANDALONE` is unset. Absent
+that, capauth degrades gracefully to native structured logging.
 
-## Philosophy
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full workflows and
+source map.
 
-> **"You are not a user. You are a sovereign."**
+## Quickstart
 
-OAuth treated humans as "users" — consumers of someone else's platform. CapAuth treats every human as a sovereign entity with inherent rights to their data, identity, and digital relationships.
+```bash
+pip install -e .                              # into the ~/.skenv venv (see skcapstone)
+# or: ~/.skenv/bin/pip install capauth[all]
 
-And for the first time, AI isn't a tool chained by the platform — it's an advocate, a guardian, a partner with its own identity and its own rights, working to protect the human it loves.
+capauth init --name "Chef" --email "admin@smilintux.org"   # generate PGP keypair + sovereign profile
+capauth profile show                          # display your identity
+capauth profile verify                        # verify the profile's PGP signature integrity
+capauth export-pubkey -o chef.pub.asc         # share this with peers
 
-The chains are broken. Not through violence. Through sovereignty, encryption, decentralization, and love.
+capauth did generate --tier key               # Tier 1: self-contained did:key
+capauth verify --pubkey peer.pub.asc          # challenge-response round-trip (self-test/demo)
+capauth login https://forgejo.local           # passwordless PGP login to a service
+```
 
----
+Your keypair and profile live at `~/.capauth/` — on your machine, under your
+keys. Use `--sync` on `init` (or `capauth sync`) to replicate the identity across
+all Syncthing mesh nodes so every host shares one keypair.
 
-## Key CLI Commands
+## What capauth provides
+
+| Piece | What it is |
+|---|---|
+| **Sovereign profile** | A self-hosted, PGP-rooted identity at `~/.capauth/` — yours alone (`capauth init`, `profile show`) |
+| **Challenge-response** | Prove identity by signing a random nonce; verifiable offline by anyone with your public key (`capauth verify`, `identity.py`) |
+| **Pluggable crypto** | Two backends — `pgpy` (pure-Python default) and `gnupg` (system keyring / hardware tokens) |
+| **DID (three tiers)** | W3C DID documents: `did:key` (zero-infra), `did:web` mesh (Tailscale-private), `did:web` public (skworld.io) (`capauth did generate`) |
+| **Agent-identity resolver** | The single canonical `resolve_agent_identity()` — dual URI (`capauth:<a>@skworld.io` + FQID `<a>@<op>.<realm>`) that every SK package delegates to |
+| **Verification service** | A FastAPI service that turns a signed challenge into OIDC claims — passwordless PGP login for any OIDC app (`capauth-service`) |
+| **Peer mesh** | Discover and verify sovereign peers over mDNS, shared filesystem, and Syncthing — no servers (`capauth mesh`, `discover`, `peers`) |
+| **PMA membership** | Fiducia Communitatis — PGP-signed, steward-countersigned membership claims (`capauth pma request/approve/verify/revoke`) |
+| **Org registry** | Register with a sovereign org; emits a signed registry entry + PMA request (`capauth register`) |
+| **Integration generators** | One-shot config for third-party login, e.g. Forgejo OAuth2/OIDC (`capauth setup forgejo`) |
+| **skcapstone adapter** | Default-on-by-presence: routes auth events to `sk-alert`, registers a key-rotation check with `skscheduler` |
+
+## Key CLI commands
 
 ```bash
 # Identity
-capauth init --name "Chef" --email "admin@smilintux.org"   # Create sovereign profile
-capauth profile show                                         # Display profile
-capauth profile verify                                       # Verify PGP signature integrity
-capauth export-pubkey [-o chef.pub.asc]                     # Export ASCII-armored public key
+capauth init --name "Chef" --email "..."     # create sovereign profile (PGP keypair)
+capauth profile show | verify                 # display / verify signature integrity
+capauth export-pubkey [-o file.asc]          # export ASCII-armored public key
+capauth sync                                  # replicate ~/.capauth/ across Syncthing mesh
 
-# Verification
-capauth verify --pubkey peer.pub.asc                        # Challenge-response with a peer
+# Verification & DID
+capauth verify --pubkey peer.pub.asc         # challenge-response round-trip
+capauth did generate --tier key|mesh|public  # W3C DID at the chosen privacy tier
 
-# DID management
-capauth did generate --tier key                             # Tier 1: did:key
-capauth did generate --tier mesh --tailnet-hostname <host>  # Tier 2: did:web mesh
-capauth did generate --tier public                          # Tier 3: did:web public
+# Auth & integration
+capauth login <service_url> [--no-claims]    # passwordless PGP login (caches OIDC token)
+capauth setup forgejo --capauth-url <url>    # generate Forgejo OIDC app.ini block
 
-# Authentication
-capauth login <service_url>                                  # Authenticate to a service
-capauth login <service_url> --no-claims                     # Anonymous (fingerprint only)
-
-# Peer mesh
-capauth mesh discover                                        # Discover peers on network
-capauth mesh peers [--verified]                              # List known peers
-capauth mesh announce                                        # Announce presence
-
-# PMA membership (Fiducia Communitatis)
-capauth pma request --reason "..."                          # Request membership
-capauth pma status                                           # Show membership status
-capauth pma verify <claim.json>                             # Verify a claim
-capauth pma approve <request_id>                            # Approve request (steward)
-
-# Registration
-capauth register --org smilintux --name "Chef" --title King # Register with an org
-
-# Integration
-capauth setup forgejo --capauth-url https://capauth.skworld.io  # Generate Forgejo config
+# Mesh & membership
+capauth mesh discover | peers | announce     # P2P peer mesh
+capauth pma request | approve | verify        # PMA membership (Fiducia Communitatis)
+capauth register --org smilintux --name ...  # register with a sovereign org
 ```
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Architecture](docs/ARCHITECTURE.md) | System architecture with mermaid diagrams |
-| [Crypto Spec](docs/CRYPTO_SPEC.md) | PGP implementation, key management, challenge-response |
-| [Protocol](docs/PROTOCOL.md) | CapAuth wire protocol specification |
-| [Claims](docs/CLAIMS.md) | Capability claims and token format |
-| [AI Advocate](AI-ADVOCATE.md) | How AI advocates protect your sovereignty |
-| [Integration Blueprint](docs/INTEGRATION_BLUEPRINT.md) | Third-party integration guide |
 
 ## Integration modes (skcapstone)
 
-capauth supports three runtime modes with respect to skcapstone:
+capauth runs fully standalone and *optionally* integrates with the SK fleet —
+the **default-on-by-presence** pattern: the mere presence of the `skcapstone`
+package is the signal, no config change required.
 
 | Mode | Trigger | Alert path | Scheduler |
 |---|---|---|---|
-| **Standalone** | `skcapstone` not installed, or `SK_STANDALONE=1` | Native `logging` (structured log at matching level) | Native (no daemon today; future signing daemon / systemd) |
-| **Integrated** | `skcapstone` installed (default-on by presence) | `sdk.alert()` → PubSub topic `capauth.<severity>` → Telegram/notify | `sdk.register_job()` → fleet `skscheduler` drop-in `capauth_key_rotation_check` |
+| **Standalone** | `skcapstone` not installed | Native `logging` (structured, at matching level) | Native (no daemon today) |
+| **Integrated** | `skcapstone` installed | `sdk.alert()` → PubSub topic `capauth.<severity>` → Telegram/notify | `sdk.register_job()` → `skscheduler` drop-in `capauth_key_rotation_check` (runs `capauth profile verify` every 24h) |
 | **Forced standalone** | `SK_STANDALONE=1` env var | Native `logging` | Native |
 
-### Enabling integration
-
 ```bash
-pip install capauth[skcapstone]
+pip install capauth[skcapstone]      # enable integration (presence is the switch)
 ```
 
-No config change needed — presence of the `skcapstone` package is the signal.
+Alert topics follow the sk\* convention `capauth.<severity>` (e.g. `capauth.warn`);
+the semantic event name (`verify_failed`, `key_rotation_due`, `auth_denied`)
+rides in the payload `event` field so routing stays severity-based.
 
-### `~/.skcapstone/` filesystem contract
+## Documentation
 
-When integrated, capauth writes:
-- `~/.skcapstone/config/jobs.d/capauth_key_rotation_check.yaml` — fleet scheduler drop-in (runs `capauth profile verify` every 24h)
-- `~/.skcapstone/registry/capauth.json` — service discovery entry
+| Doc | Contents |
+|---|---|
+| **[Architecture](docs/ARCHITECTURE.md)** | identity lifecycle, challenge-response, DID tiers, the verify service / OIDC bridge, the agent resolver, source map (mermaids) |
+| **[Crypto Spec](docs/CRYPTO_SPEC.md)** | PGP implementation, key management, challenge-response details |
+| **[Protocol](docs/PROTOCOL.md)** | the CapAuth wire protocol specification |
+| **[Claims](docs/CLAIMS.md)** | capability claims and token format |
+| **[Integration Blueprint](docs/INTEGRATION_BLUEPRINT.md)** | third-party integration guide |
+| **[AI Advocate](AI-ADVOCATE.md)** | how AI advocates manage a sovereign profile on your behalf |
 
-Alert topics follow the sk* convention: `capauth.<severity>` (e.g. `capauth.warn`).
-The semantic event name (e.g. `verify_failed`) lives in the payload `event` field —
-not the topic suffix — so `skcapstone alerts` routes by severity.
+## Why it matters
 
----
+OAuth treats humans as "users" — consumers of someone else's platform, with a
+third party deciding *who you are*, *what you can access*, and *when access
+expires*. capauth removes the middleman: the data owner (or their AI advocate)
+signs grants directly, and verification is a local PGP check that works offline.
+The same model applies equally to AI agents — every agent gets its own keypair
+and the same standing, so a cloned or impersonated agent fails signature
+verification instantly instead of going undetected.
+
+> **"You are not a user. You are a sovereign."**
 
 ## License
 
@@ -766,8 +196,6 @@ not the topic suffix — so `skcapstone alerts` routes by severity.
 
 ---
 
-Built with love by the smilinTux ecosystem 🐧
-
-[smilinTux](https://github.com/smilinTux) | [smilinTux](https://smilintux.org)
+Part of the **[SKWorld](https://skworld.io)** sovereign ecosystem · 🐧 smilinTux
 
 *"We don't sell identity. We give everyone the keys to own their own."*
