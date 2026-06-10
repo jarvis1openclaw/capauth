@@ -426,6 +426,36 @@ For users not yet set up with CapAuth:
 
 ---
 
+## Integration modes (skcapstone)
+
+capauth supports three runtime modes with respect to skcapstone:
+
+| Mode | Trigger | Alert path | Scheduler |
+|---|---|---|---|
+| **Standalone** | `skcapstone` not installed, or `SK_STANDALONE=1` | Native `logging` (structured log at matching level) | No native alerting — capauth has no native alert path today |
+| **Integrated** | `skcapstone` installed (default-on by presence) | `sdk.alert()` → PubSub topic `capauth.<severity>` → Telegram/notify | `sdk.register_job()` → fleet `skscheduler` drop-in `capauth_key_rotation_check` |
+| **Forced standalone** | `SK_STANDALONE=1` env var | Native `logging` | Native |
+
+### Enabling integration
+
+```bash
+pip install capauth[skcapstone]
+```
+
+No config change needed — presence of the `skcapstone` package is the signal.
+
+### `~/.skcapstone/` filesystem contract
+
+When integrated, capauth writes:
+- `~/.skcapstone/config/jobs.d/capauth_key_rotation_check.yaml` — fleet scheduler drop-in (runs `capauth profile verify` every 24h, confirming PGP key integrity)
+- `~/.skcapstone/registry/capauth.json` — service discovery entry
+
+Alert topics follow the sk* convention: `capauth.<severity>` (e.g. `capauth.warn`).
+The semantic event name (e.g. `verify_failed`, `auth_denied`, `key_rotation_due`) lives in
+the payload `event` field — not the topic suffix — so `skcapstone alerts` routes by severity.
+
+---
+
 ## Comparison
 
 | Feature | OAuth 2.0 | Solid Pods | CapAuth |
