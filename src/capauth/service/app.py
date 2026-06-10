@@ -21,6 +21,7 @@ import logging
 import os
 import secrets
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -34,6 +35,7 @@ from pydantic import BaseModel, Field
 from ..authentik.nonce_store import issue, peek
 from ..authentik.stage import build_challenge, verify_auth_response
 from ..authentik.verifier import fingerprint_from_armor
+from .. import integration as _integration
 from .keystore import KeyStore
 
 logger = logging.getLogger("capauth.service")
@@ -61,10 +63,19 @@ JWT_SECRET = os.environ.get("CAPAUTH_JWT_SECRET", _JWT_SECRET_DEFAULT)
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_SECONDS = 3600
 
+@asynccontextmanager
+async def _lifespan(application: FastAPI):  # type: ignore[type-arg]
+    """Register capauth with the skcapstone fleet on service start."""
+    _integration.ensure_schedule()
+    _integration.register_self()
+    yield
+
+
 app = FastAPI(
     title="CapAuth Verification Service",
     description="Passwordless PGP authentication for any application",
     version="1.0.0",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -309,6 +320,11 @@ async def verify_endpoint(req: VerifyRequest) -> dict[str, Any]:
     )
 
     if not success:
+        _integration.alert(
+            "verify_failed",
+            {"fingerprint": req.fingerprint[:8], "error_code": error_code},
+            level="warn",
+        )
         raise HTTPException(
             status_code=401,
             detail={"error": error_code, "capauth_version": "1.0"},

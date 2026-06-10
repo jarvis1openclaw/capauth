@@ -700,6 +700,36 @@ capauth setup forgejo --capauth-url https://capauth.skworld.io  # Generate Forge
 | [AI Advocate](AI-ADVOCATE.md) | How AI advocates protect your sovereignty |
 | [Integration Blueprint](docs/INTEGRATION_BLUEPRINT.md) | Third-party integration guide |
 
+## Integration modes (skcapstone)
+
+capauth supports three runtime modes with respect to skcapstone:
+
+| Mode | Trigger | Alert path | Scheduler |
+|---|---|---|---|
+| **Standalone** | `skcapstone` not installed, or `SK_STANDALONE=1` | Native `logging` (structured log at matching level) | Native (no daemon today; future signing daemon / systemd) |
+| **Integrated** | `skcapstone` installed (default-on by presence) | `sdk.alert()` → PubSub topic `capauth.<severity>` → Telegram/notify | `sdk.register_job()` → fleet `skscheduler` drop-in `capauth_key_rotation_check` |
+| **Forced standalone** | `SK_STANDALONE=1` env var | Native `logging` | Native |
+
+### Enabling integration
+
+```bash
+pip install capauth[skcapstone]
+```
+
+No config change needed — presence of the `skcapstone` package is the signal.
+
+### `~/.skcapstone/` filesystem contract
+
+When integrated, capauth writes:
+- `~/.skcapstone/config/jobs.d/capauth_key_rotation_check.yaml` — fleet scheduler drop-in (runs `capauth profile verify` every 24h)
+- `~/.skcapstone/registry/capauth.json` — service discovery entry
+
+Alert topics follow the sk* convention: `capauth.<severity>` (e.g. `capauth.warn`).
+The semantic event name (e.g. `verify_failed`) lives in the payload `event` field —
+not the topic suffix — so `skcapstone alerts` routes by severity.
+
+---
+
 ## License
 
 **GPL-3.0-or-later** — Free as in freedom. Identity is a right, not a product.
