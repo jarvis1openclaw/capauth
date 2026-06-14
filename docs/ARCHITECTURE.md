@@ -112,7 +112,7 @@ detailed `soul` fields are never included.
 flowchart LR
     PROF["sovereign profile<br/>(public_key_armor only)"] --> GEN["DIDDocumentGenerator"]
     GEN --> T1["Tier 1 — did:key<br/>self-contained, zero infra<br/>~/.skcapstone/did/key.json"]
-    GEN --> T2["Tier 2 — did:web mesh<br/>Tailscale-private, full endpoints<br/>~/.skcomm/well-known/did.json"]
+    GEN --> T2["Tier 2 — did:web mesh<br/>Tailscale-private, full endpoints<br/>~/.skcomms/well-known/did.json"]
     GEN --> T3["Tier 3 — did:web public<br/>minimal: key + name + org<br/>Cloudflare KV via publish-did.sh"]
     T3 --> PUB["did:web:ws.weblink.skworld.io:agents:&lt;slug&gt;"]
 ```
@@ -120,7 +120,7 @@ flowchart LR
 | Tier | Method | Scope | Contents | Storage |
 |------|--------|-------|----------|---------|
 | **1** | `did:key` | Self-contained, zero infrastructure | Public key JWK only | `~/.skcapstone/did/key.json` |
-| **2** | `did:web` (mesh) | Tailscale-private | Full service endpoints + `skworld:agentCard` | `~/.skcomm/well-known/did.json` (Tailscale Serve) |
+| **2** | `did:web` (mesh) | Tailscale-private | Full service endpoints + `skworld:agentCard` | `~/.skcomms/well-known/did.json` (Tailscale Serve) |
 | **3** | `did:web` (public) | Public internet | Minimal: key + name + entity_type + org | Cloudflare KV → `did:web:ws.weblink.skworld.io:agents:<slug>` |
 
 **Security invariants (enforced in `did.py`):** `from_profile()` reads only the

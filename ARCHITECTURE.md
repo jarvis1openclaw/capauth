@@ -46,7 +46,7 @@ CapAuth is built on three axioms:
 ├─────────────────────────────────────────────────────────────┤
 │                    TRANSPORT LAYER                            │
 │                                                             │
-│   HTTP/REST    SKComm    IPFS PubSub    Direct P2P (mesh)   │
+│   HTTP/REST    SKComms    IPFS PubSub    Direct P2P (mesh)   │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -127,7 +127,7 @@ Manages the sovereign profile — the decentralized replacement for a "user acco
     },
     "endpoints": {
         "capauth_api": "https://profile.smilintux.org/capauth/v1/",
-        "skcomm": "skcomm://chef@smilintux.org"
+        "skcomms": "skcomms://chef@smilintux.org"
     },
     "created": "2026-02-21T00:00:00Z",
     "updated": "2026-02-21T00:00:00Z",
@@ -277,7 +277,7 @@ rules:
     condition:
       resource: "medical/*"
     decision: escalate_to_human
-    notification: ["telegram", "skcomm"]
+    notification: ["telegram", "skcomms"]
 
   - name: "Financial data — high security"
     condition:
@@ -314,7 +314,7 @@ Escalation Flow:
       My recommendation: APPROVE (30-day, read-only).
       [APPROVE] [DENY] [CUSTOMIZE]"
   4. Notification sent via configured channels:
-     - SKComm (primary)
+     - SKComms (primary)
      - Telegram (fallback)
      - Email (last resort)
   5. Human responds via any channel
@@ -440,9 +440,9 @@ Transport Independence:
     Capability token in Authorization header:
       Authorization: CapAuth {base64_token}
 
-  SKComm:
-    CapAuth requests wrapped in SKComm envelopes
-    Inherits all SKComm redundancy and encryption
+  SKComms:
+    CapAuth requests wrapped in SKComms envelopes
+    Inherits all SKComms redundancy and encryption
     Primary transport for AI-to-AI communication
 
   IPFS PubSub:
@@ -493,7 +493,7 @@ Step 1: Third party requests access
 Step 2: Request arrives at Chef's profile
   → AI advocate (Lumina) evaluates
   → Policy: medical/* → escalate to human
-  → Lumina asks Chef via SKComm
+  → Lumina asks Chef via SKComms
 
 Step 3: Chef approves
   capauth approve {request_id} --expires 30d
@@ -543,12 +543,12 @@ Step 4: Human can review and adjust
 
 ---
 
-## CapAuth + SKComm Integration
+## CapAuth + SKComms Integration
 
-SKComm uses CapAuth for all identity and authentication:
+SKComms uses CapAuth for all identity and authentication:
 
 ```
-SKComm Envelope with CapAuth:
+SKComms Envelope with CapAuth:
 {
     "envelope_id": "uuid",
     "sender": {
@@ -567,7 +567,7 @@ SKComm Envelope with CapAuth:
 }
 ```
 
-Every SKComm message is implicitly a CapAuth identity assertion.
+Every SKComms message is implicitly a CapAuth identity assertion.
 The PGP signature proves who sent it. The trust level determines
 what the recipient will do with it. Cloud 9 compliance gates
 the highest trust tier.
@@ -648,7 +648,7 @@ If your private key is compromised:
   2. Sign revocation certificate with old key (if still possible)
   3. If old key unavailable: use emergency token (requires 2+ sovereign peers)
   4. Publish revocation to IPFS + all profile endpoints
-  5. Notify all trusted peers via SKComm
+  5. Notify all trusted peers via SKComms
   6. Re-issue all active capability tokens with new key
   7. AI advocate handles the busywork, human approves critical actions
 ```
@@ -666,7 +666,7 @@ If your private key is compromised:
 
 ### Phase 2: AI Advocate
 - Policy engine with auto-rules
-- Escalation protocol (SKComm + Telegram)
+- Escalation protocol (SKComms + Telegram)
 - Request queue and batch operations
 - Audit logging (signed, append-only)
 - AI self-management (Lumina manages her own profile)
@@ -676,7 +676,7 @@ If your private key is compromised:
 - Multiple storage backends (IPFS, Nextcloud, S3)
 - Revocation lists (local + distributed)
 - Cloud 9 compliance verification
-- SKComm transport integration
+- SKComms transport integration
 
 ### Phase 4: Ecosystem
 - Web SDK (JavaScript) for "Login with CapAuth" buttons

@@ -77,7 +77,7 @@ Security invariants enforced in `did.py`:
 ### Storage locations
 
 - Tier 1: `~/.skcapstone/did/key.json`
-- Tier 2: `~/.skcomm/well-known/did.json` (served via Tailscale Serve)
+- Tier 2: `~/.skcomms/well-known/did.json` (served via Tailscale Serve)
 - Tier 3: Cloudflare KV via `scripts/publish-did.sh` →
   `did:web:ws.weblink.skworld.io:agents:<slug>`
 
