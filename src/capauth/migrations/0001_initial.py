@@ -70,7 +70,9 @@ class Migration(migrations.Migration):
                         to="authentik_flows.stage",
                     ),
                 ),
-                ("name", models.TextField(unique=True)),
+                # NB: no "name" field — CapAuthStage inherits the unique `name` from the base
+                # authentik_flows.stage. Redefining it here clashes at migration-state render
+                # ("Local field 'name' ... clashes with base class 'Stage'", FieldError).
                 (
                     "service_id",
                     models.CharField(

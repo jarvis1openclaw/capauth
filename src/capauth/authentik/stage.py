@@ -119,8 +119,11 @@ if _AUTHENTIK_AVAILABLE:
             help_text="How long (seconds) a challenge nonce remains valid.",
         )
 
-        # Override Stage.name with a unique default (Stage requires unique name)
-        name = models.TextField(unique=True, default=_default_capauth_stage_name)
+        # NB: do NOT redefine `name` here. Authentik's base `Stage` already provides a unique
+        # `name`; redeclaring it as a local field raises a FieldError at model-class creation
+        # ("Local field 'name' ... clashes with field of the same name from base class 'Stage'",
+        # live-proven against Authentik 2025.12.6 / 2026.5.x). The stage name is set at
+        # instance/blueprint creation — no per-model default needed.
 
         class Meta:
             app_label = "capauth"
