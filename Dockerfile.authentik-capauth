@@ -59,7 +59,12 @@ COPY . /app/capauth
 RUN VENV_SP="$(ls -d /ak-root/.venv/lib/python3.*/site-packages | head -1)" && \
     echo "Installing capauth into $VENV_SP" && \
     pip install --no-cache-dir --no-deps --target "$VENV_SP" /app/capauth && \
-    pip install --no-cache-dir --target "$VENV_SP" PGPy
+    pip install --no-cache-dir --target "$VENV_SP" PGPy && \
+    # PGPy 0.6.0 does `import imghdr`, a stdlib module removed in Python 3.13 (PEP 594).
+    # Authentik 2026.5.x runs on py3.14, so without a backport the CapAuth PGP crypto
+    # backend fails to import at runtime (live-proven on .13). Vendor a faithful shim.
+    cp /app/capauth/authentik-custom/imghdr.py "$VENV_SP/imghdr.py" && \
+    PYTHONPATH="$VENV_SP" python3 -c "import imghdr; assert hasattr(imghdr,'what'); print('imghdr shim OK')"
 
 # Copy rebuilt frontend (overwrite stock flow interface bundle)
 COPY --from=web-builder /build/authentik/web/dist/ /web/dist/
