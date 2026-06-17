@@ -550,24 +550,10 @@ if _AUTHENTIK_AVAILABLE:
             if derived_fp and derived_fp.upper() != fingerprint.upper():
                 return self.challenge_invalid(response)
 
-            is_new = not CapAuthKeyRegistry.objects.filter(fingerprint=fingerprint).exists()
-            if is_new:
-                if stage.require_enrollment_approval:
-                    return self.challenge_invalid(response)
-                CapAuthKeyRegistry.objects.create(
-                    fingerprint=fingerprint,
-                    public_key_armor=public_key_armor,
-                    approved=True,
-                )
-                logger.info("New CapAuth key enrolled: %s", fingerprint[:8])
-
-            try:
-                key_record = CapAuthKeyRegistry.objects.get(fingerprint=fingerprint)
-            except CapAuthKeyRegistry.DoesNotExist:
-                return self.challenge_invalid(response)
-            if not key_record.approved:
-                return self.challenge_invalid(response)
-
+            # SECURITY: verify the PGP signature (proof of private-key possession) BEFORE writing
+            # anything to the key registry. The earlier ordering enrolled a NEW key first and only
+            # then verified, so anyone who knew a victim's public key + fingerprint could spam the
+            # registry with unverified, auto-approved entries. Verify first; enroll only on success.
             success, error_code, oidc_claims = verify_auth_response(
                 fingerprint=fingerprint,
                 nonce_id=nonce_id,
@@ -578,6 +564,30 @@ if _AUTHENTIK_AVAILABLE:
                 challenge_context=challenge_ctx,
             )
             if not success:
+                return self.challenge_invalid(response)
+
+            # Signature is valid → safe to enroll. A first-seen key is recorded with approval state
+            # derived from the stage policy: auto-approved when enrollment approval is off, otherwise
+            # enrolled as PENDING (approved=False) so an admin has a verified key to approve later.
+            is_new = not CapAuthKeyRegistry.objects.filter(fingerprint=fingerprint).exists()
+            if is_new:
+                CapAuthKeyRegistry.objects.create(
+                    fingerprint=fingerprint,
+                    public_key_armor=public_key_armor,
+                    approved=not stage.require_enrollment_approval,
+                )
+                logger.info(
+                    "New CapAuth key enrolled: %s (approved=%s)",
+                    fingerprint[:8],
+                    not stage.require_enrollment_approval,
+                )
+
+            try:
+                key_record = CapAuthKeyRegistry.objects.get(fingerprint=fingerprint)
+            except CapAuthKeyRegistry.DoesNotExist:
+                return self.challenge_invalid(response)
+            if not key_record.approved:
+                # Verified, but pending admin approval (require_enrollment_approval) → deny login.
                 return self.challenge_invalid(response)
 
             CapAuthKeyRegistry.objects.filter(fingerprint=fingerprint).update(
