@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .claims_mapper import map_claims, preferred_username_fallback
-from .nonce_store import consume, issue
+from .nonce_store import consume, issue, peek
 from .verifier import (
     canonical_claims_payload,
     canonical_nonce_payload,
@@ -498,15 +498,45 @@ if _AUTHENTIK_AVAILABLE:
                         },
                         separators=(",", ":"),
                     )
-                return HttpChallengeResponse(CapAuthChallenge(data=new_challenge_data))
+                # A DRF serializer constructed with `data=` must be validated before its
+                # `.data` is accessed; HttpChallengeResponse reads `.data` immediately, so
+                # without this is_valid() it raises AssertionError ("you must call .is_valid()
+                # ... before accessing .data") and the flow dies with ak-stage-flow-error
+                # (live-proven on .13). The GET path is fine because the framework validates
+                # the challenge for us; this manual re-prompt must validate explicitly.
+                new_challenge = CapAuthChallenge(data=new_challenge_data)
+                new_challenge.is_valid()
+                return HttpChallengeResponse(new_challenge)
 
             # Step 2: Full signed response
             if not all([fingerprint, nonce_id, nonce_sig]):
                 return self.challenge_invalid(response)
 
+            stage = self.executor.current_stage
+
+            # Reconstruct the challenge context the client signed over. The fingerprint→nonce
+            # step (above) stashes it in plan.context, but Django sessions don't detect the
+            # in-place mutation of the plan object, so that context is NOT reliably persisted to
+            # this next request (live-proven on .13: POST-2 saw an empty context → fingerprint
+            # mismatch → endless re-prompt). The nonce store is backed by the shared Django
+            # cache, which DOES survive across requests and gunicorn workers, so rebuild the
+            # canonical challenge from the persisted nonce record. Its fields map 1:1 onto the
+            # challenge issued in step 1 (issued_at→timestamp, expires_at→expires), so the
+            # canonical payload is byte-identical to what the client signed.
             challenge_ctx = self.executor.plan.context.get("capauth_challenge", {})
             stored_fp = self.executor.plan.context.get("capauth_fingerprint", "")
-            if fingerprint != stored_fp:
+            if not challenge_ctx:
+                nonce_record = peek(nonce_id)
+                if nonce_record:
+                    challenge_ctx = {
+                        "nonce": nonce_record["nonce"],
+                        "client_nonce_echo": nonce_record.get("client_nonce_echo", ""),
+                        "timestamp": nonce_record["issued_at"],
+                        "service": stage.service_id,
+                        "expires": nonce_record["expires_at"],
+                    }
+                    stored_fp = nonce_record.get("fingerprint", "")
+            if not challenge_ctx or fingerprint != stored_fp:
                 return self.challenge_invalid(response)
 
             if not public_key_armor:
@@ -520,7 +550,6 @@ if _AUTHENTIK_AVAILABLE:
             if derived_fp and derived_fp.upper() != fingerprint.upper():
                 return self.challenge_invalid(response)
 
-            stage = self.executor.current_stage
             is_new = not CapAuthKeyRegistry.objects.filter(fingerprint=fingerprint).exists()
             if is_new:
                 if stage.require_enrollment_approval:
