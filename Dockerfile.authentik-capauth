@@ -50,13 +50,16 @@ FROM ghcr.io/goauthentik/server:${AK_VERSION}
 
 USER root
 
-# Install capauth into Authentik's venv.
-# Most deps (pydantic, httpx, click, etc.) already exist in the venv.
-# Only PGPy is missing. Install --no-deps first, then add PGPy.
+# Install capauth into Authentik's venv. Most deps (pydantic, httpx, click, …) already exist
+# there; only PGPy is missing. The venv's Python MINOR changes across Authentik releases
+# (2026.5.x → py3.14, earlier → py3.13), so detect the real site-packages dir at build time
+# instead of hardcoding it — otherwise capauth lands on the wrong path and Django can't import
+# it (ModuleNotFoundError: capauth, live-proven on .13 against 2026.5.3).
 COPY . /app/capauth
-ENV PIP_TARGET=/ak-root/.venv/lib/python3.13/site-packages
-RUN pip install --no-cache-dir --no-deps /app/capauth && \
-    pip install --no-cache-dir PGPy
+RUN VENV_SP="$(ls -d /ak-root/.venv/lib/python3.*/site-packages | head -1)" && \
+    echo "Installing capauth into $VENV_SP" && \
+    pip install --no-cache-dir --no-deps --target "$VENV_SP" /app/capauth && \
+    pip install --no-cache-dir --target "$VENV_SP" PGPy
 
 # Copy rebuilt frontend (overwrite stock flow interface bundle)
 COPY --from=web-builder /build/authentik/web/dist/ /web/dist/
