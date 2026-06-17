@@ -4,12 +4,16 @@
 #
 #  Build:
 #    docker build -f Dockerfile.authentik-capauth \
-#      -t skgit.skstack01.douno.it/skadmin/authentik-capauth:2025.12.3 .
+#      -t ghcr.io/smilintux/authentik-capauth:2026.5.3 \
+#      -t ghcr.io/smilintux/authentik-capauth:latest .
 #
 #  Push:
-#    docker push skgit.skstack01.douno.it/skadmin/authentik-capauth:2025.12.3
+#    docker push ghcr.io/smilintux/authentik-capauth:2026.5.3
+#    docker push ghcr.io/smilintux/authentik-capauth:latest
+#
+#  AK_VERSION tracks the latest STABLE Authentik release (override with --build-arg).
 # ──────────────────────────────────────────────────────────────────────
-ARG AK_VERSION=2025.12.3
+ARG AK_VERSION=2026.5.3
 
 # ── Stage 1: Rebuild Authentik frontend with ak-stage-capauth ────────
 FROM node:24-bookworm AS web-builder
