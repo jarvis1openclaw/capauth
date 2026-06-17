@@ -29,10 +29,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && \
 
 WORKDIR /build/authentik/web
 
-# Install web dependencies
-# Use npm install (not ci) because the lockfile may need regeneration
-# after adding the capauth stage component
-RUN npm install --ignore-engines 2>&1 || npm install --legacy-peer-deps 2>&1
+# Install web dependencies with `npm ci` so we get the EXACT versions Authentik's
+# lockfile pins. `npm install` resolves newer minor versions (notably of Lit), which
+# breaks esbuild's chunk splitting at runtime — the built bundle ends up with a chunk
+# that imports `createRef` from a sibling chunk that doesn't re-export it
+# ("does not provide an export named 'createRef'"), so the whole SPA fails to boot
+# (live-proven on .13: blank loading spinner, backend/API fine). Our CapAuth component
+# only uses deps Authentik already ships, so `npm ci` needs no lockfile regeneration.
+RUN npm ci --ignore-engines 2>&1 || npm install --ignore-engines 2>&1
 
 # Copy CapAuth stage web component into the Authentik web tree
 COPY web/stages/capauth/ /build/authentik/web/src/flow/stages/capauth/
