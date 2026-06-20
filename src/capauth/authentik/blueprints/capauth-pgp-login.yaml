@@ -1,0 +1,53 @@
+# Authentik blueprint — CapAuth PGP login (default install for the authentik-capauth image)
+#
+# Bake this into the image at /blueprints/ (Authentik auto-discovers + applies it via the WORKER on
+# startup) so every sksso install gets a CapAuth PGP authentication flow out of the box. It creates:
+#   * a CapAuthStage instance ("capauth-pgp")
+#   * an authentication flow ("capauth-authentication") = CapAuthStage @0 + default user-login @10
+# Then point any OAuth2/OIDC provider's `authentication_flow` at this flow (or set it as the brand's
+# default authentication flow) to make browser login passwordless-PGP.
+#
+# PREREQUISITES the image must satisfy for this to work end-to-end:
+#   1. capauth Django app registered: `capauth.apps.CapauthConfig` in TENANT_APPS (via /data/user_settings.py).
+#   2. URLconf wired: path("api/v3/stages/capauth/", include("capauth.authentik.urls")) — needed for the
+#      admin/API to manage the stage (the blueprint creates it via ORM and does NOT need the API route,
+#      but the admin UI does).
+#   3. migrations applied for the capauth app (CapAuthStage + CapAuthKeyRegistry tables).
+#   4. *** the ak-stage-capauth WEB COMPONENT must be in /web/dist *** — cap9 ships the STOCK frontend
+#      (the from-source web build hit an esbuild chunk-split bug), so the browser cannot render the PGP
+#      challenge. Until a rebuilt image (cap10) restores the component, this flow works via the flow-
+#      executor API but NOT in a browser. For in-browser PGP today, use the native nextcloud `capauth`
+#      plugin instead. See capauth-nextcloud-native-plugin-sop.md.
+version: 1
+metadata:
+  name: capauth-pgp-login
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - model: capauth.capauthstage
+    id: capauth-stage
+    identifiers:
+      name: capauth-pgp
+    attrs:
+      service_id: sksso
+      require_enrollment_approval: true   # prod: true (first-seen keys need approval). set false ONLY for a controlled test window.
+      nonce_ttl_seconds: 300
+  - model: authentik_flows.flow
+    id: capauth-flow
+    identifiers:
+      slug: capauth-authentication
+    attrs:
+      name: CapAuth PGP Login
+      title: Sign in with your PGP key
+      designation: authentication
+      authentication: require_unauthenticated
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf capauth-flow
+      stage: !KeyOf capauth-stage
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf capauth-flow
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, default-authentication-login]]
+      order: 10
