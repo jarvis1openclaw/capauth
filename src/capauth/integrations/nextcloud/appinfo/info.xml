@@ -5,37 +5,49 @@
     <name>CapAuth</name>
     <summary>Passwordless PGP authentication for Nextcloud</summary>
     <description><![CDATA[
-        CapAuth lets you sign in to Nextcloud using your sovereign PGP key.
-        No passwords. No OAuth flows. Just cryptographic proof of identity.
+CapAuth lets you sign in to Nextcloud using your sovereign PGP key.
+No passwords. No OAuth flows. Just cryptographic proof of identity.
 
-        Features:
-        - Passwordless PRIMARY login via PGP challenge-response (no password,
-          no Authentik, no OAuth) — a real Nextcloud user backend, not a 2FA
-          second factor.
-        - "Sign in with CapAuth" button on the login page.
-        - Bearer token authentication for API requests.
-        - Auto-provisioning of users from CapAuth identity claims.
-        - Group synchronisation: CapAuth teams → Nextcloud groups.
+## Features
+
+- **Passwordless PRIMARY login** via PGP challenge-response (no password,
+  no Authentik, no OAuth) — a real Nextcloud user backend, not just a 2FA
+  second factor.
+- **"Sign in with CapAuth"** button on the login page.
+- **Bearer token authentication** for API requests.
+- **Auto-provisioning** of users from CapAuth identity claims.
+- **Group synchronisation**: CapAuth teams map to Nextcloud groups.
+
+## How it works
+
+The client signs a server-issued challenge nonce with their PGP private
+key. CapAuth verifies the signature against the registered public key and
+issues a Nextcloud session — the private key never leaves the user's device.
     ]]></description>
-    <version>0.3.0-dev</version>
-    <licence>agpl</licence>
-    <author mail="hello@capauth.io">SKWorld</author>
+    <version>0.3.0</version>
+    <licence>AGPL-3.0-or-later</licence>
+    <author mail="hello@capauth.io" homepage="https://capauth.io">SKWorld</author>
     <namespace>CapAuth</namespace>
+    <types>
+        <authentication/>
+    </types>
+    <documentation>
+        <user>https://github.com/smilintux/capauth/blob/main/src/capauth/integrations/nextcloud/README.md</user>
+        <admin>https://github.com/smilintux/capauth/blob/main/src/capauth/integrations/nextcloud/README.md</admin>
+        <developer>https://github.com/smilintux/capauth</developer>
+    </documentation>
     <category>security</category>
+    <category>integration</category>
+    <website>https://capauth.io</website>
+    <discussion>https://github.com/smilintux/capauth/discussions</discussion>
     <bugs>https://github.com/smilintux/capauth/issues</bugs>
+    <repository type="git">https://github.com/smilintux/capauth.git</repository>
+    <screenshot>https://raw.githubusercontent.com/smilintux/capauth/main/src/capauth/integrations/nextcloud/screenshots/login.png</screenshot>
     <dependencies>
         <php min-version="8.1"/>
         <nextcloud min-version="27" max-version="34"/>
     </dependencies>
-    <types>
-        <authentication/>
-    </types>
     <background-jobs>
         <job>OCA\CapAuth\BackgroundJob\PruneExpiredNonces</job>
     </background-jobs>
-    <settings>
-        <admin>OCA\CapAuth\Settings\AdminSettings</admin>
-        <admin-section>OCA\CapAuth\Settings\AdminSection</admin-section>
-    </settings>
-    <navigations/>
 </info>

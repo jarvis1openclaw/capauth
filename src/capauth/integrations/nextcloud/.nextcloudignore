@@ -1,0 +1,33 @@
+# Files/dirs excluded from the App Store release tarball.
+# Matched by krankerl (and by the manual build script) when assembling
+# build/artifacts/capauth/.
+
+# Signing material — NEVER ship the private key (or even the public CSR/CRT).
+certificates/
+
+# Dev / test / CI tooling
+tests/
+phpunit.xml
+.phpunit.result.cache
+composer.json
+composer.lock
+krankerl.toml
+build/
+build-release.sh
+PUBLISHING.md
+.nextcloudignore
+
+# VCS / editor noise
+.git/
+.gitignore
+.gitattributes
+.github/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Dev dependencies (vendor is only shipped if it contains *runtime* deps;
+# this app currently has none, so vendor/ is dev-only and excluded).
+vendor/
+node_modules/

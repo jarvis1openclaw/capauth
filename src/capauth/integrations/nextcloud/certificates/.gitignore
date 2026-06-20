@@ -1,0 +1,12 @@
+# NEVER commit the private signing key. It is the secret that proves
+# authorship of every CapAuth App Store release. Loss = revoke + re-CSR;
+# leak = anyone can publish malicious "capauth" releases under our name.
+#
+# The .csr (public CSR submitted to nextcloud/app-certificate-requests) and
+# the eventual .crt (signed cert returned by Nextcloud) ARE safe to commit
+# and are intentionally NOT ignored.
+capauth.key
+*.key
+
+# Belt-and-suspenders: ignore any stray PEM private keys.
+*.pem

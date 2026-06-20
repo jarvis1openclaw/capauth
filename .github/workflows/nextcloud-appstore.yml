@@ -1,0 +1,74 @@
+name: Publish Nextcloud app to App Store
+
+# Tag with e.g. `nextcloud-v0.3.0` to cut a CapAuth Nextcloud App Store release.
+# The same tag is used as the GitHub Release that hosts the download tarball.
+on:
+  push:
+    tags:
+      - "nextcloud-v*"
+
+permissions:
+  contents: write   # needed to create the GitHub Release that hosts the tarball
+
+env:
+  APP_ID: capauth
+  APP_DIR: src/capauth/integrations/nextcloud
+
+jobs:
+  build-sign-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install krankerl
+        run: |
+          # Prebuilt krankerl release (faster than `cargo install`).
+          KRANKEREL_VERSION="0.14.0"
+          curl -fsSL -o /tmp/krankerl \
+            "https://github.com/ChristophWurst/krankerl/releases/download/v${KRANKEREL_VERSION}/krankerl"
+          chmod +x /tmp/krankerl
+          sudo mv /tmp/krankerl /usr/local/bin/krankerl
+          krankerl --version
+
+      - name: Install signing certificate + key
+        run: |
+          mkdir -p ~/.nextcloud/certificates
+          # The signed .crt returned by Nextcloud is committed in the repo.
+          cp "${APP_DIR}/certificates/${APP_ID}.crt" ~/.nextcloud/certificates/${APP_ID}.crt
+          # The private key is provided as a repo secret (NEVER committed).
+          printf '%s' "${{ secrets.NEXTCLOUD_APP_SIGNING_KEY }}" > ~/.nextcloud/certificates/${APP_ID}.key
+          chmod 600 ~/.nextcloud/certificates/${APP_ID}.key
+
+      - name: Build release tarball
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          krankerl package
+          ls -l build/artifacts/${APP_ID}.tar.gz
+
+      - name: Sign tarball
+        id: sign
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          SIG=$(openssl dgst -sha512 -sign ~/.nextcloud/certificates/${APP_ID}.key \
+                build/artifacts/${APP_ID}.tar.gz | openssl base64 -A)
+          echo "signature=${SIG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release (hosts the download URL)
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APP_DIR }}/build/artifacts/${{ env.APP_ID }}.tar.gz
+          fail_on_unmatched_files: true
+
+      - name: Determine download URL
+        id: url
+        run: |
+          # The asset URL on the just-created GitHub Release.
+          echo "download=https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${APP_ID}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release to apps.nextcloud.com
+        run: |
+          curl -sSf -X POST https://apps.nextcloud.com/api/v1/apps/releases \
+            -H "Authorization: Token ${{ secrets.NEXTCLOUD_APPSTORE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"download\": \"${{ steps.url.outputs.download }}\", \"signature\": \"${{ steps.sign.outputs.signature }}\", \"nightly\": false}"

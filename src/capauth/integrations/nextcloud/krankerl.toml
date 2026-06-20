@@ -1,0 +1,19 @@
+# krankerl packaging config for the CapAuth Nextcloud app.
+# https://github.com/ChristophWurst/krankerl
+#
+# Build + sign + publish a release:
+#   krankerl package          # -> build/artifacts/capauth.tar.gz
+#   krankerl sign --package   # reads ~/.nextcloud/certificates/capauth.key
+#   krankerl publish [--nightly] <download-url>
+#
+# Krankerl reads the signing key/cert from ~/.nextcloud/certificates/<id>.{key,crt}
+# and the App Store API token from ~/.krankerl/config.toml (see PUBLISHING.md).
+
+[package]
+# Commands run inside the cloned build/artifacts/capauth/ before archiving.
+# This app vendors no runtime PHP deps and ships hand-written JS/CSS (no build
+# step), so there is nothing to compile. If runtime composer deps are ever
+# added, uncomment the line below to vendor them production-only.
+before_cmds = [
+    # "composer install --no-dev --optimize-autoloader",
+]
