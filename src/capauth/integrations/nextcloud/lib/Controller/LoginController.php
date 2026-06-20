@@ -6,49 +6,86 @@ namespace OCA\CapAuth\Controller;
 
 use OCA\CapAuth\Db\KeyRegistry;
 use OCA\CapAuth\Service\ChallengeService;
+use OCA\CapAuth\Service\UserProvisioningService;
 use OCA\CapAuth\Service\VerifierService;
+use OCA\CapAuth\User\Backend as CapAuthBackend;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\JSONResponse;
+use OCP\AppFramework\Http\TemplateResponse;
 use OCP\IConfig;
 use OCP\IRequest;
 use OCP\ISession;
 use OCP\IUserManager;
 use OCP\IUserSession;
+use Psr\Log\LoggerInterface;
 
 /**
- * HTTP endpoints for the CapAuth challenge/response login flow.
+ * HTTP endpoints for the CapAuth passwordless PRIMARY login flow.
  *
  * Routes (defined in appinfo/routes.php):
- *   POST /capauth/challenge              → challenge()
- *   GET  /capauth/nonce/{nonce}/status   → nonceStatus()
- *   POST /capauth/verify                 → verify()
+ *   GET  /apps/capauth/login                 → showLogin()   (the login page)
+ *   POST /apps/capauth/v1/challenge          → challenge()   (issue nonce)
+ *   GET  /apps/capauth/v1/nonce/{nonce}/status → nonceStatus()
+ *   POST /apps/capauth/v1/verify             → verify()      (PGP verify + login)
+ *
+ * Unlike the old 2FA provider (which could only run as a *second* factor after
+ * a password), this controller drives a full primary login: on successful
+ * verification it writes the verified fingerprint into the PHP session so that
+ * {@see CapAuthBackend} (an IApacheBackend) can bridge it into a real
+ * Nextcloud login on the same request, then completes the user session.
  */
 class LoginController extends Controller {
     public function __construct(
-        string                          $appName,
-        IRequest                        $request,
-        private readonly ChallengeService $challengeService,
-        private readonly VerifierService  $verifierService,
-        private readonly KeyRegistry      $keyRegistry,
-        private readonly ISession         $session,
-        private readonly IUserSession     $userSession,
-        private readonly IUserManager     $userManager,
-        private readonly IConfig          $config,
+        string                            $appName,
+        IRequest                          $request,
+        private readonly ChallengeService         $challengeService,
+        private readonly VerifierService          $verifierService,
+        private readonly KeyRegistry              $keyRegistry,
+        private readonly UserProvisioningService  $provisioningService,
+        private readonly ISession                 $session,
+        private readonly IUserSession             $userSession,
+        private readonly IUserManager             $userManager,
+        private readonly IConfig                  $config,
+        private readonly LoggerInterface          $logger,
     ) {
         parent::__construct($appName, $request);
+    }
+
+    // ── Login page ───────────────────────────────────────────────────────────
+
+    /**
+     * GET /apps/capauth/login
+     *
+     * Renders the standalone CapAuth login page (the target of the
+     * "Sign in with CapAuth" alternative-login button). Rendered with the
+     * 'guest' layout so it works for not-yet-authenticated users.
+     *
+     * @PublicPage
+     * @NoCSRFRequired
+     * @UseSession
+     */
+    public function showLogin(string $redirect_url = ''): TemplateResponse {
+        $this->session->set('capauth.redirect_url', $redirect_url);
+        return new TemplateResponse(
+            'capauth',
+            'login',
+            ['redirect_url' => $redirect_url],
+            TemplateResponse::RENDER_AS_GUEST,
+        );
     }
 
     // ── Challenge issuance ───────────────────────────────────────────────────
 
     /**
-     * POST /capauth/challenge
+     * POST /apps/capauth/v1/challenge
      * Body: { "fingerprint": "...", "client_nonce": "..." }
      *
      * Returns the challenge context the client must sign.
      *
      * @NoCSRFRequired
      * @PublicPage
+     * @UseSession
      */
     public function challenge(): JSONResponse {
         $body        = $this->parseJsonBody();
@@ -69,7 +106,8 @@ class LoginController extends Controller {
         );
         $challenge = $this->challengeService->issue($fingerprint, $service, $clientNonce);
 
-        // Store fingerprint and challenge in server-side session for 2FA flow.
+        // Store fingerprint + challenge in the server-side session for the
+        // subsequent verify() call.
         $this->session->set('capauth.fingerprint', strtoupper($fingerprint));
         $this->session->set('capauth.challenge', $challenge);
 
@@ -79,7 +117,7 @@ class LoginController extends Controller {
     // ── Nonce status polling ─────────────────────────────────────────────────
 
     /**
-     * GET /capauth/nonce/{nonce}/status
+     * GET /apps/capauth/v1/nonce/{nonce}/status
      *
      * Returns: { "status": "pending"|"consumed"|"expired"|"unknown" }
      *
@@ -100,20 +138,30 @@ class LoginController extends Controller {
         return new JSONResponse(['status' => 'pending']);
     }
 
-    // ── Verification + session establishment ─────────────────────────────────
+    // ── Verification + primary login ─────────────────────────────────────────
 
     /**
-     * POST /capauth/verify
+     * POST /apps/capauth/v1/verify
      * Body: {
      *   "fingerprint":      "...",
      *   "nonce":            "...",
      *   "nonce_signature":  "...",
      *   "claims":           { ... },    // optional
-     *   "claims_signature": "..."       // required when claims present
+     *   "claims_signature": "...",      // required when claims present
+     *   "public_key":       "..."       // optional, used for first-time provisioning
      * }
+     *
+     * On success this performs a PASSWORDLESS PRIMARY login:
+     *   1. Verifies the PGP signature(s) against the approved key.
+     *   2. Provisions / resolves the Nextcloud user from the claims.
+     *   3. Writes the verified fingerprint into the session so CapAuthBackend
+     *      (IApacheBackend) recognises it.
+     *   4. Calls IUserSession::completeLogin() + createSessionToken() to
+     *      establish a real, fully-authenticated Nextcloud session.
      *
      * @NoCSRFRequired
      * @PublicPage
+     * @UseSession
      */
     public function verify(): JSONResponse {
         $body        = $this->parseJsonBody();
@@ -122,6 +170,7 @@ class LoginController extends Controller {
         $nonceSig    = $body['nonce_signature']  ?? '';
         $claims      = $body['claims']           ?? [];
         $claimsSig   = $body['claims_signature'] ?? '';
+        $publicKey   = $body['public_key']       ?? '';
 
         if (!$this->isValidFingerprint($fingerprint) || $nonceId === '' || $nonceSig === '') {
             return new JSONResponse(['error' => 'bad_request'], Http::STATUS_BAD_REQUEST);
@@ -139,7 +188,7 @@ class LoginController extends Controller {
             return new JSONResponse(['error' => 'no_challenge'], Http::STATUS_UNAUTHORIZED);
         }
 
-        // Retrieve and validate the public key.
+        // Key must be approved (enrollment-approval gate).
         if (!$this->keyRegistry->isApproved($fingerprint)) {
             return new JSONResponse(['error' => 'key_not_approved'], Http::STATUS_FORBIDDEN);
         }
@@ -148,6 +197,7 @@ class LoginController extends Controller {
             return new JSONResponse(['error' => 'key_not_found'], Http::STATUS_NOT_FOUND);
         }
 
+        // PGP verification.
         [$ok, $err] = $this->verifierService->verifyAuthResponse(
             fingerprint:    $fingerprint,
             nonceId:        $nonceId,
@@ -162,18 +212,64 @@ class LoginController extends Controller {
             return new JSONResponse(['error' => $err], Http::STATUS_UNAUTHORIZED);
         }
 
-        // Find Nextcloud user linked to this fingerprint.
-        $uid  = $this->keyRegistry->getUid($fingerprint);
-        $user = $uid !== null ? $this->userManager->get($uid) : null;
+        // Provision / resolve the Nextcloud user from the verified identity.
+        $provisionClaims = is_array($claims) ? $claims : [];
+        if ($publicKey !== '' && !isset($provisionClaims['public_key'])) {
+            $provisionClaims['public_key'] = $publicKey;
+        }
+        $user = $this->provisioningService->provisionFromFingerprint($fingerprint, $provisionClaims);
+
+        // Fall back to an existing registry mapping if provisioning is disabled.
+        if ($user === null) {
+            $uid  = $this->keyRegistry->getUid($fingerprint);
+            $user = $uid !== null ? $this->userManager->get($uid) : null;
+        }
 
         if ($user === null) {
             return new JSONResponse(['error' => 'user_not_found'], Http::STATUS_NOT_FOUND);
         }
 
         $this->keyRegistry->recordAuth($fingerprint);
-        $this->userSession->setUser($user);
 
-        return new JSONResponse(['status' => 'ok', 'uid' => $uid]);
+        // ── Establish the passwordless primary session ──────────────────────
+        // 1. Mark the fingerprint verified so CapAuthBackend (IApacheBackend)
+        //    will claim this session and report the UID.
+        $this->session->set(CapAuthBackend::SESSION_FINGERPRINT, $fingerprint);
+        $this->session->set(CapAuthBackend::SESSION_UID, $user->getUID());
+
+        // 2. Complete the login through the user session so Nextcloud runs its
+        //    normal post-login hooks, then create a session token so the
+        //    browser stays authenticated on subsequent requests.
+        try {
+            if (method_exists($this->userSession, 'completeLogin')) {
+                $this->userSession->completeLogin($user, [
+                    'loginName' => $user->getUID(),
+                    'password'  => null,
+                ]);
+            } else {
+                $this->userSession->setUser($user);
+            }
+
+            if (method_exists($this->userSession, 'createSessionToken')) {
+                $this->userSession->createSessionToken(
+                    $this->request,
+                    $user->getUID(),
+                    $user->getUID(),
+                    null,
+                );
+            }
+        } catch (\Throwable $e) {
+            $this->logger->error('CapAuth: failed to complete passwordless login: ' . $e->getMessage());
+            // Last-resort: at least set the user on the session.
+            $this->userSession->setUser($user);
+        }
+
+        $redirect = $this->session->get('capauth.redirect_url');
+        return new JSONResponse([
+            'status'       => 'ok',
+            'uid'          => $user->getUID(),
+            'redirect_url' => is_string($redirect) && $redirect !== '' ? $redirect : '/',
+        ]);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

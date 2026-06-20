@@ -112,6 +112,44 @@ class KeyRegistry {
         return $row !== false ? ($row['uid'] ?: null) : null;
     }
 
+    /**
+     * True when the given Nextcloud UID has at least one key on record
+     * (approved or pending). Used by the passwordless user backend's
+     * userExists().
+     */
+    public function uidHasKey(string $uid): bool {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('uid')
+           ->from(self::TABLE)
+           ->where($qb->expr()->eq('uid', $qb->createNamedParameter($uid)))
+           ->setMaxResults(1);
+        $result = $qb->executeQuery();
+        $row    = $result->fetch();
+        $result->closeCursor();
+        return $row !== false;
+    }
+
+    /**
+     * Return the distinct list of Nextcloud UIDs that have at least one
+     * approved key. Backs the user backend's getUsers()/countUsers().
+     *
+     * @return string[]
+     */
+    public function listUids(): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->selectDistinct('uid')
+           ->from(self::TABLE)
+           ->where($qb->expr()->eq('approved', $qb->createNamedParameter(1, IQueryBuilder::PARAM_INT)))
+           ->orderBy('uid', 'ASC');
+        $result = $qb->executeQuery();
+        $rows   = $result->fetchAll();
+        $result->closeCursor();
+        return array_values(array_filter(array_map(
+            static fn(array $r): string => (string) ($r['uid'] ?? ''),
+            $rows,
+        ), static fn(string $u): bool => $u !== ''));
+    }
+
     // ── Listing ──────────────────────────────────────────────────────────────
 
     public function listAll(): array {

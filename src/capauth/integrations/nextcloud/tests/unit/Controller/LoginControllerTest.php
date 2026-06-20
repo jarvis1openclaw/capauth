@@ -7,6 +7,7 @@ namespace OCA\CapAuth\Tests\Unit\Controller;
 use OCA\CapAuth\Controller\LoginController;
 use OCA\CapAuth\Db\KeyRegistry;
 use OCA\CapAuth\Service\ChallengeService;
+use OCA\CapAuth\Service\UserProvisioningService;
 use OCA\CapAuth\Service\VerifierService;
 use OCP\AppFramework\Http;
 use OCP\IConfig;
@@ -15,26 +16,31 @@ use OCP\ISession;
 use OCP\IUserManager;
 use OCP\IUserSession;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 
 class LoginControllerTest extends TestCase {
     private LoginController $controller;
     private ChallengeService $challengeService;
     private VerifierService $verifierService;
     private KeyRegistry $keyRegistry;
+    private UserProvisioningService $provisioningService;
     private ISession $session;
     private IUserSession $userSession;
     private IUserManager $userManager;
     private IConfig $config;
+    private LoggerInterface $logger;
 
     protected function setUp(): void {
-        $this->challengeService = $this->createMock(ChallengeService::class);
-        $this->verifierService  = $this->createMock(VerifierService::class);
-        $this->keyRegistry      = $this->createMock(KeyRegistry::class);
-        $this->session          = $this->createMock(ISession::class);
-        $this->userSession      = $this->createMock(IUserSession::class);
-        $this->userManager      = $this->createMock(IUserManager::class);
-        $this->config           = $this->createMock(IConfig::class);
-        $request                = $this->createMock(IRequest::class);
+        $this->challengeService    = $this->createMock(ChallengeService::class);
+        $this->verifierService     = $this->createMock(VerifierService::class);
+        $this->keyRegistry         = $this->createMock(KeyRegistry::class);
+        $this->provisioningService = $this->createMock(UserProvisioningService::class);
+        $this->session             = $this->createMock(ISession::class);
+        $this->userSession         = $this->createMock(IUserSession::class);
+        $this->userManager         = $this->createMock(IUserManager::class);
+        $this->config              = $this->createMock(IConfig::class);
+        $this->logger              = $this->createMock(LoggerInterface::class);
+        $request                   = $this->createMock(IRequest::class);
 
         $this->controller = new LoginController(
             'capauth',
@@ -42,42 +48,21 @@ class LoginControllerTest extends TestCase {
             $this->challengeService,
             $this->verifierService,
             $this->keyRegistry,
+            $this->provisioningService,
             $this->session,
             $this->userSession,
             $this->userManager,
             $this->config,
+            $this->logger,
         );
     }
 
     // ── challenge() ──────────────────────────────────────────────────────────
 
-    public function testChallengeBadFingerprintReturnsBadRequest(): void {
-        // Inject JSON body via $_SERVER / streams is awkward in unit tests.
-        // Instead we call the private parseJsonBody indirectly by pre-setting
-        // php://input in a stream wrapper — here we use a simpler approach:
-        // test a subclass that overrides parseJsonBody.
-        $controller = $this->getMockBuilder(LoginController::class)
-            ->setConstructorArgs([
-                'capauth',
-                $this->createMock(IRequest::class),
-                $this->challengeService,
-                $this->verifierService,
-                $this->keyRegistry,
-                $this->session,
-                $this->userSession,
-                $this->userManager,
-                $this->config,
-            ])
-            ->onlyMethods(['parseJsonBodyPublic'])
-            ->getMock();
-
-        // Use reflection to call the real challenge() with a mocked body.
-        // Simpler: just call through the real controller after setting up
-        // the body in a testable way by subclassing.
-
-        // For a clean unit test without I/O tricks we rely on integration tests
-        // for the full HTTP round-trip. Here we just verify the controller can
-        // be instantiated and that our mocks wire correctly.
+    public function testControllerInstantiates(): void {
+        // Full HTTP round-trips (php://input bodies) are covered by the
+        // integration suite. Here we just verify the controller wires up with
+        // the passwordless-primary constructor signature.
         $this->assertInstanceOf(LoginController::class, $this->controller);
     }
 

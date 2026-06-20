@@ -4,27 +4,34 @@ declare(strict_types=1);
 
 return [
     'routes' => [
-        // ── Challenge / verify flow ──────────────────────────────────────────
+        // ── Login page (alternative-login button target) ─────────────────────
+        [
+            'name'    => 'login#showLogin',
+            'url'     => '/login',
+            'verb'    => 'GET',
+        ],
+
+        // ── Challenge / verify flow (primary passwordless login) ─────────────
+        // js/login.js posts to /apps/capauth/v1/* — keep that prefix.
         [
             'name'    => 'login#challenge',
-            'url'     => '/challenge',
+            'url'     => '/v1/challenge',
             'verb'    => 'POST',
         ],
         [
-            'name'    => 'login#nonce_status',
-            'url'     => '/nonce/{nonce}/status',
+            'name'    => 'login#nonceStatus',
+            'url'     => '/v1/nonce/{nonce}/status',
             'verb'    => 'GET',
         ],
         [
             'name'    => 'login#verify',
-            'url'     => '/verify',
+            'url'     => '/v1/verify',
             'verb'    => 'POST',
         ],
 
         // ── Token validation endpoint ────────────────────────────────────────
-        // Used by external services (e.g. Nextcloud apps, CLI tools) to
-        // validate a CapAuth Bearer token without going through the full
-        // 2FA flow. Returns the identity claims on success.
+        // Used by external services (Nextcloud apps, CLI tools) to validate a
+        // CapAuth Bearer token. Returns the identity claims on success.
         [
             'name'    => 'token#validate',
             'url'     => '/token/validate',

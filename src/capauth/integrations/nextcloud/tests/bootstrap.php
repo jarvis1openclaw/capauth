@@ -67,13 +67,51 @@ if (!interface_exists('OCP\IL10N')) {
     eval('namespace OCP; interface IL10N { public function t(string $text, array $parameters = []): string; }');
 }
 if (!interface_exists('OCP\IURLGenerator')) {
-    eval('namespace OCP; interface IURLGenerator { public function linkToRouteAbsolute(string $routeName, array $arguments = []): string; public function imagePath(string $appName, string $file): string; }');
+    eval('namespace OCP; interface IURLGenerator { public function linkToRoute(string $routeName, array $arguments = []): string; public function linkToRouteAbsolute(string $routeName, array $arguments = []): string; public function imagePath(string $appName, string $file): string; }');
 }
 if (!interface_exists('OCP\IUserManager')) {
     eval('namespace OCP; interface IUserManager { public function get(string $uid): ?IUser; public function userExists(string $uid): bool; public function createUser(string $uid, string $password); }');
 }
 if (!interface_exists('OCP\IUserSession')) {
-    eval('namespace OCP; interface IUserSession { public function setUser(?IUser $user): void; public function createRememberMeToken(IUser $user): void; }');
+    eval('namespace OCP; interface IUserSession { public function setUser(?IUser $user): void; public function createRememberMeToken(IUser $user): void; public function completeLogin(IUser $user, array $loginDetails): void; public function createSessionToken(\OCP\IRequest $request, string $uid, string $loginName, ?string $password = null, int $remember = 0): bool; }');
+}
+
+// ── PSR / logging ───────────────────────────────────────────────────────────
+if (!interface_exists('Psr\\Log\\LoggerInterface')) {
+    eval('namespace Psr\Log; interface LoggerInterface {
+        public function emergency(string|\Stringable $message, array $context = []): void;
+        public function alert(string|\Stringable $message, array $context = []): void;
+        public function critical(string|\Stringable $message, array $context = []): void;
+        public function error(string|\Stringable $message, array $context = []): void;
+        public function warning(string|\Stringable $message, array $context = []): void;
+        public function notice(string|\Stringable $message, array $context = []): void;
+        public function info(string|\Stringable $message, array $context = []): void;
+        public function debug(string|\Stringable $message, array $context = []): void;
+        public function log($level, string|\Stringable $message, array $context = []): void;
+    }');
+}
+
+// ── User backend (passwordless primary) stubs ───────────────────────────────
+if (!class_exists('OCP\\User\\Backend\\ABackend')) {
+    eval('namespace OCP\User\Backend; abstract class ABackend { abstract public function getBackendName(): string; public function implementsActions($actions): bool { return false; } }');
+}
+if (!interface_exists('OCP\\User\\Backend\\ICountUsersBackend')) {
+    eval('namespace OCP\User\Backend; interface ICountUsersBackend { public function countUsers(); }');
+}
+if (!interface_exists('OCP\\User\\Backend\\IGetDisplayNameBackend')) {
+    eval('namespace OCP\User\Backend; interface IGetDisplayNameBackend { public function getDisplayName($uid): string; }');
+}
+if (!interface_exists('OCP\\User\\Backend\\ICustomLogout')) {
+    eval('namespace OCP\User\Backend; interface ICustomLogout { public function logout(): void; }');
+}
+if (!interface_exists('OCP\\Authentication\\IApacheBackend')) {
+    eval('namespace OCP\Authentication; interface IApacheBackend { public function isSessionActive(); public function getLogoutUrl(); public function getCurrentUserId(); }');
+}
+if (!interface_exists('OCP\\Authentication\\IAlternativeLogin')) {
+    eval('namespace OCP\Authentication; interface IAlternativeLogin { public function getLabel(): string; public function getLink(): string; public function getClass(): string; public function load(): void; }');
+}
+if (!class_exists('OCP\\Util')) {
+    eval('namespace OCP; class Util { public static function addScript(string $app, string $file): void {} public static function addStyle(string $app, string $file): void {} }');
 }
 
 // OCP\DB stubs
@@ -89,6 +127,8 @@ interface IQueryBuilder {
     const PARAM_INT  = 1;
     const PARAM_STR  = 2;
     public function select($selects): self;
+    public function selectDistinct($select): self;
+    public function setMaxResults($maxResults): self;
     public function from(string $from, ?string $alias = null): self;
     public function where(...$predicates): self;
     public function andWhere(...$predicates): self;
@@ -131,7 +171,13 @@ if (!class_exists('OCP\\AppFramework\\Http\\TemplateResponse')) {
     eval('
 namespace OCP\AppFramework\Http;
 class TemplateResponse {
-    public function __construct(string $appName, string $template, array $params = [], string $renderAs = "user") {}
+    const RENDER_AS_GUEST = "guest";
+    const RENDER_AS_USER = "user";
+    const RENDER_AS_BLANK = "";
+    private string $templateName; private array $params;
+    public function __construct(string $appName, string $template, array $params = [], string $renderAs = "user") { $this->templateName = $template; $this->params = $params; }
+    public function getTemplateName(): string { return $this->templateName; }
+    public function getParams(): array { return $this->params; }
 }
 ');
 }

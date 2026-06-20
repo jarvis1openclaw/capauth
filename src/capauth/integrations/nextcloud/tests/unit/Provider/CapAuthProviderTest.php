@@ -134,7 +134,8 @@ class CapAuthProviderTest extends TestCase {
 
         $this->verifierService->method('fingerprintFromArmor')->willReturn($fp);
         $this->verifierService->method('verifyAuthResponse')->willReturn([true, '']);
-        $this->keyRegistry->method('recordAuth')->willReturn(null);
+        // recordAuth() returns void; configuring a return value errors under
+        // PHPUnit 11. Leaving it unconfigured is sufficient.
 
         $user = $this->createMock(IUser::class);
         $json = json_encode([
