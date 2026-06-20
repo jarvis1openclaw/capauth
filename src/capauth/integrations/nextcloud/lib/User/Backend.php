@@ -126,6 +126,17 @@ class Backend extends ABackend implements
     }
 
     /**
+     * CapAuth users are key-driven: deprovisioning is done by REVOKING the
+     * enrolled PGP key (admin/key-registry action), not via Nextcloud user
+     * deletion. Declining here (return false) is the standard external-backend
+     * pattern (user_oidc/user_saml) — once a key is revoked, userExists() and
+     * hasApprovedKey() return false and the account can no longer log in.
+     */
+    public function deleteUser($uid): bool {
+        return false;
+    }
+
+    /**
      * @param string $search
      * @param null|int $limit
      * @param null|int $offset
