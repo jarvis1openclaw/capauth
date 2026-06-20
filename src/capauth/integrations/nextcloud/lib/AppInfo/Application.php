@@ -44,12 +44,10 @@ class Application extends App implements IBootstrap {
         $context->registerMiddleware(PgpVerificationMiddleware::class);
 
         // Add the "Sign in with CapAuth" button to the login page.
-        // registerAlternativeLoginProvider() is available on the bootstrap
-        // registration context (the documented path is NC ≥ 34; the call is
-        // also present earlier, so guard on method_exists for portability).
-        if (method_exists($context, 'registerAlternativeLoginProvider')) {
-            $context->registerAlternativeLoginProvider(CapAuthLogin::class);
-        }
+        // The method is registerAlternativeLogin() (IRegistrationContext, NC ≥ 20) —
+        // NOT registerAlternativeLoginProvider() (which does not exist; using it
+        // silently dropped the button on NC 30).
+        $context->registerAlternativeLogin(CapAuthLogin::class);
     }
 
     public function boot(IBootContext $context): void {
