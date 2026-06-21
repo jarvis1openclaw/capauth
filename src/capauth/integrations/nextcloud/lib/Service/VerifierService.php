@@ -245,7 +245,7 @@ class VerifierService {
         return null;
     }
 
-    private function runProcess(array $cmd, int &$exitCode = 0): string {
+    private function runProcess(array $cmd, ?int &$exitCode = null): string {
         $proc = proc_open(
             $cmd,
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],

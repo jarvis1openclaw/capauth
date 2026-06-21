@@ -190,13 +190,16 @@ class PgpVerificationMiddleware extends Middleware {
 
     // ── Exception handler ────────────────────────────────────────────────────
 
-    public function afterException($controller, string $methodName, \Exception $exception): ?JSONResponse {
+    public function afterException($controller, string $methodName, \Exception $exception): JSONResponse {
         if ($exception instanceof \OCA\CapAuth\Exception\CapAuthUnauthorizedException) {
             return new JSONResponse(
                 ['error' => $exception->getMessage()],
                 Http::STATUS_UNAUTHORIZED,
             );
         }
-        return null;
+        // We do not handle other exceptions — re-throw so the next middleware in
+        // the chain (and ultimately Nextcloud core) can. Returning null here is
+        // a fatal: MiddlewareDispatcher::afterException() requires a Response.
+        throw $exception;
     }
 }

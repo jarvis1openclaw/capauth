@@ -176,14 +176,14 @@ class LoginController extends Controller {
             return new JSONResponse(['error' => 'bad_request'], Http::STATUS_BAD_REQUEST);
         }
 
-        // Consume nonce (prevents replay).
-        [$nonceOk, $nonceErr] = $this->challengeService->consume($nonceId, $fingerprint);
+        // Consume nonce (prevents replay). The consumed record IS the
+        // authoritative challenge context — rebuild the canonical payload from
+        // it, NOT from the PHP session (which doesn't reliably persist across
+        // the pre-login challenge→verify request pair).
+        [$nonceOk, $nonceErr, $challengeCtx] = $this->challengeService->consume($nonceId, $fingerprint);
         if (!$nonceOk) {
             return new JSONResponse(['error' => $nonceErr], Http::STATUS_UNAUTHORIZED);
         }
-
-        // Retrieve the challenge context stored when the nonce was issued.
-        $challengeCtx = $this->session->get('capauth.challenge');
         if (!is_array($challengeCtx)) {
             return new JSONResponse(['error' => 'no_challenge'], Http::STATUS_UNAUTHORIZED);
         }
@@ -242,20 +242,23 @@ class LoginController extends Controller {
         //    browser stays authenticated on subsequent requests.
         try {
             if (method_exists($this->userSession, 'completeLogin')) {
+                // NB: 'password' must be a STRING ('' for passwordless) — NC's
+                // PostLoginEvent constructor types it as string and rejects null.
                 $this->userSession->completeLogin($user, [
                     'loginName' => $user->getUID(),
-                    'password'  => null,
+                    'password'  => '',
                 ]);
             } else {
                 $this->userSession->setUser($user);
             }
 
             if (method_exists($this->userSession, 'createSessionToken')) {
+                // Last arg (password) must be a string too, not null.
                 $this->userSession->createSessionToken(
                     $this->request,
                     $user->getUID(),
                     $user->getUID(),
-                    null,
+                    '',
                 );
             }
         } catch (\Throwable $e) {

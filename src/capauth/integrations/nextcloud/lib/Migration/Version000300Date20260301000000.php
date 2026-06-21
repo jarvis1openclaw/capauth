@@ -13,7 +13,7 @@ use OCP\Migration\SimpleMigrationStep;
 /**
  * Creates the oc_capauth_keys table for persistent PGP key storage.
  */
-class CreateKeyRegistryTable extends SimpleMigrationStep {
+class Version000300Date20260301000000 extends SimpleMigrationStep {
     public function changeSchema(IOutput $output, Closure $schemaClosure, array $options): ?ISchemaWrapper {
         /** @var ISchemaWrapper $schema */
         $schema = $schemaClosure();

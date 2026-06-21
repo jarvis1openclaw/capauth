@@ -5,22 +5,38 @@ declare(strict_types=1);
 namespace OCA\CapAuth\Service;
 
 use OCP\ICache;
+use OCP\ICacheFactory;
 use OCP\IConfig;
 
 /**
  * Issues and validates CapAuth challenge nonces.
  *
- * Nonces are stored in the Nextcloud distributed cache with a TTL.
+ * Nonces are stored in the Nextcloud DISTRIBUTED cache with a TTL.
  * Once consumed a nonce is marked as used so replay is impossible.
+ *
+ * IMPORTANT: the challenge runs PRE-LOGIN (no authenticated user), so we must
+ * use a NON-user-scoped cache. Injecting OCP\ICache directly resolves to the
+ * per-user cache and throws "Can't get cache storage, user not logged in" on
+ * the public passwordless-login routes. We build a distributed cache via
+ * ICacheFactory instead (memcache/redis when configured; an isAvailable()
+ * guard falls back to a local cache otherwise).
  */
 class ChallengeService {
     private const CACHE_PREFIX  = 'capauth_nonce_';
     private const DEFAULT_TTL   = 120; // seconds
 
+    private readonly ICache $cache;
+
     public function __construct(
         private readonly IConfig $config,
-        private readonly ICache  $cache,
-    ) {}
+        ICacheFactory $cacheFactory,
+    ) {
+        // Distributed cache works without a logged-in user; falls back to a
+        // local cache when no distributed backend is configured.
+        $this->cache = $cacheFactory->isAvailable()
+            ? $cacheFactory->createDistributed('capauth_nonce')
+            : $cacheFactory->createLocal('capauth_nonce');
+    }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
@@ -80,23 +96,26 @@ class ChallengeService {
         $rec = $this->cache->get($this->cacheKey($nonce));
 
         if ($rec === null || !is_array($rec)) {
-            return [false, 'invalid_nonce'];
+            return [false, 'invalid_nonce', null];
         }
         if ($rec['used'] === true) {
-            return [false, 'invalid_nonce'];
+            return [false, 'invalid_nonce', null];
         }
         if (strtoupper($rec['fingerprint']) !== $fp) {
-            return [false, 'invalid_nonce'];
+            return [false, 'invalid_nonce', null];
         }
         if (new \DateTimeImmutable() > new \DateTimeImmutable($rec['expires_at'])) {
-            return [false, 'invalid_nonce'];
+            return [false, 'invalid_nonce', null];
         }
 
         // Mark consumed.
         $rec['used'] = true;
         $this->cache->set($this->cacheKey($nonce), $rec, 60);
 
-        return [true, ''];
+        // Return the (pre-consume) record so the caller can rebuild the exact
+        // canonical challenge the client signed — the authoritative source,
+        // independent of the PHP session (which is unreliable pre-login).
+        return [true, '', $rec];
     }
 
     /**
