@@ -2,15 +2,18 @@
 #  Custom Authentik image with CapAuth PGP passwordless stage
 #  Adds: Python backend (Django app) + Lit web component (frontend)
 #
-#  Build (cap10 restores the from-source ak-stage-capauth web component — PGP login works
-#  in a BROWSER again; cap9 had shipped the stock frontend without it):
+#  Build (cap11 registers ak-stage-capauth in the flow STAGE REGISTRY so the
+#  FlowExecutor can DISPATCH to it — fixes the browser "No stage found for
+#  component: ak-stage-capauth" that remained after cap10 compiled the component
+#  in but never added it to StageEntries; cap10 restored the from-source web
+#  component; cap9 had shipped the stock frontend without it):
 #    docker build -f Dockerfile.authentik-capauth \
-#      -t ghcr.io/smilintux/authentik-capauth:2026.5.3-cap10 \
+#      -t ghcr.io/smilintux/authentik-capauth:2026.5.3-cap11 \
 #      -t ghcr.io/smilintux/authentik-capauth:2026.5.3 \
 #      -t ghcr.io/smilintux/authentik-capauth:latest .
 #
 #  Push:
-#    docker push ghcr.io/smilintux/authentik-capauth:2026.5.3-cap10
+#    docker push ghcr.io/smilintux/authentik-capauth:2026.5.3-cap11
 #    docker push ghcr.io/smilintux/authentik-capauth:2026.5.3
 #    docker push ghcr.io/smilintux/authentik-capauth:latest
 #
@@ -48,10 +51,31 @@ RUN npm ci --ignore-engines 2>&1
 # Copy CapAuth stage web component into the Authentik web tree
 COPY web/stages/capauth/ /build/authentik/web/src/flow/stages/capauth/
 
-# Register the component in the flow entrypoint
+# Register the component in the flow entrypoint. This DEFINES the
+# `ak-stage-capauth` custom element (necessary) but is NOT sufficient on its own
+# — see the FlowExecutor registry patch below (cap11).
 RUN echo '' >> src/flow/index.entrypoint.ts && \
     echo '// CapAuth PGP passwordless stage' >> src/flow/index.entrypoint.ts && \
     echo 'import "#flow/stages/capauth/CapAuthStage";' >> src/flow/index.entrypoint.ts
+
+# cap11 FIX — register ak-stage-capauth in the flow STAGE REGISTRY so the
+# FlowExecutor can DISPATCH to it. In 2026.5.x the executor has no hard-coded
+# `switch (challenge.component)`; web/src/flow/FlowExecutor.ts:renderChallenge()
+# does `StageMapping.registry.get(challenge.component)` and renders
+# "No stage found for component: <name>" when the component is absent from the
+# registry. `StageMapping.registry` (FlowExecutorStageFactory.ts) is built from
+# the `StageEntries` array in web/src/flow/FlowExecutorStages.ts. cap10 shipped
+# the COMPONENT but never added the registry ENTRY, so the browser showed
+# "No stage found for component: ak-stage-capauth" even though the server flow
+# executor returned that exact component. This Node patch inserts the missing
+# entry, mirroring the stock ak-stage-identification / ak-stage-password entries
+# ({ stage, fetch: () => import(...) }, default "standard" prop variant). The
+# script is idempotent and exits non-zero (failing the build) if upstream moved
+# the StageEntries anchor. We then GREP-ASSERT the entry is present so a silent
+# no-op can never ship a broken executor.
+RUN node src/flow/stages/capauth/patch-stage-registry.mjs src/flow/FlowExecutorStages.ts && \
+    grep -q 'stage: "ak-stage-capauth"' src/flow/FlowExecutorStages.ts && \
+    echo "✅ ak-stage-capauth registered in StageEntries (source)"
 
 # Build the frontend. NODE_ENV=production matches the OFFICIAL Authentik image build
 # (minified bundle), so the resulting /web/dist is a drop-in replacement for the stock one.
@@ -61,7 +85,21 @@ RUN echo '' >> src/flow/index.entrypoint.ts && \
 RUN NODE_ENV=production npm run build && \
     NODE_ENV=production npm run build:sfe && \
     test -f dist/sfe/index.js && \
-    grep -rl ak-stage-capauth dist/flow >/dev/null && echo "✅ ak-stage-capauth present in /web/dist/flow"
+    grep -rl ak-stage-capauth dist/flow >/dev/null && echo "✅ ak-stage-capauth component present in /web/dist/flow" && \
+    # cap11 DISPATCH ASSERTION — prove the STAGE REGISTRY ENTRY (not just the
+    # component) survived bundling. The patched StageEntries array compiles into
+    # whichever flow chunk holds FlowExecutorStages; that entry is the ONLY place
+    # the literal "ak-stage-capauth" sits right next to a dynamic import() of the
+    # CapAuthStage chunk. We require a single bundled JS file in dist/flow where
+    # "ak-stage-capauth" and `import(` co-occur within a 200-char window (the
+    # minified `{stage:"ak-stage-capauth",fetch:()=>import("./CapAuthStage-….js")}`
+    # record). If only the component chunk existed (cap10), this would NOT match,
+    # because @customElement("ak-stage-capauth") has no adjacent dynamic import.
+    DISPATCH_FILE="$(grep -rlE 'ak-stage-capauth' dist/flow | while read f; do \
+        if grep -oE '.{0,120}ak-stage-capauth.{0,120}' "$f" | grep -q 'import('; then echo "$f"; fi; \
+      done | head -1)" && \
+    test -n "$DISPATCH_FILE" && \
+    echo "✅ ak-stage-capauth DISPATCH (registry entry + dynamic import) present in: $DISPATCH_FILE"
 
 # ── Stage 2: Final custom Authentik image ────────────────────────────
 FROM ghcr.io/goauthentik/server:${AK_VERSION}
@@ -84,7 +122,8 @@ RUN VENV_SP="$(ls -d /ak-root/.venv/lib/python3.*/site-packages | head -1)" && \
     cp /app/capauth/authentik-custom/imghdr.py "$VENV_SP/imghdr.py" && \
     PYTHONPATH="$VENV_SP" python3 -c "import imghdr; assert hasattr(imghdr,'what'); print('imghdr shim OK')"
 
-# Install the rebuilt frontend that INCLUDES the ak-stage-capauth web component (cap10).
+# Install the rebuilt frontend that INCLUDES the ak-stage-capauth web component AND
+# registers it in the flow stage registry so the executor dispatches to it (cap11).
 # cap9 shipped the stock /web/dist because an earlier from-source attempt hit the esbuild
 # code-splitting bug (a chunk imports `createRef`/`e` that a sibling chunk doesn't re-export
 # → blank SPA). Root cause was a SECOND `lit-html` copy from `npm install`; building with
