@@ -168,6 +168,12 @@ _LOGIN_PAGE = """<!DOCTYPE html>
     <span style="flex:1;height:1px;background:#334155"></span>OR<span style="flex:1;height:1px;background:#334155"></span>
   </div>
   <button id="pk-btn" onclick="passkeyLogin()" style="background:#0e7490">🔑 Sign in with a passkey</button>
+  <button id="ph-btn" onclick="capauthPhoneLogin()" style="background:#7C3AED;margin-top:.5rem">📱 Sign with your phone</button>
+  <div id="pq" style="display:none;margin-top:1rem;text-align:center">
+    <img id="pq-img" alt="pairing QR" style="width:200px;height:200px;background:#fff;border-radius:10px"/>
+    <div id="pq-status" class="sub" style="margin-top:.5rem;color:#a78bfa"></div>
+    <div id="pq-uri" style="font-size:.58rem;color:#475569;word-break:break-all;margin-top:.3rem"></div>
+  </div>
 
   <p style="margin-top:1rem;font-size:.74rem;color:#475569">
     CLI: <code>capauth sign --nonce &lt;nonce&gt;</code> &nbsp;·&nbsp; the browser extension fills the signature automatically.
@@ -176,9 +182,11 @@ _LOGIN_PAGE = """<!DOCTYPE html>
 </div>
 
 <script src="{base_url}/oidc/passkey.js"></script>
+<script type="module" src="{base_url}/oidc/bunker-login.js"></script>
 <script>
 const BASE = "{base_url}";
 const REQUEST_ID = "{request_id}";
+window._capauthBase = BASE; window._capauthReqId = REQUEST_ID; window._capauthCh = null;
 
 async function passkeyLogin(){{
   document.getElementById("err").style.display="none";
@@ -209,7 +217,7 @@ document.getElementById("fp").addEventListener("blur", async function(){{
   if(fp.length!==40){{ return; }}
   try{{
     const ch=await loadChallenge(fp);
-    currentNonce=ch.nonce; currentEcho=ch.client_nonce_echo;
+    currentNonce=ch.nonce; currentEcho=ch.client_nonce_echo; window._capauthCh=ch;
     document.getElementById("nonce").textContent=ch.nonce;
     // window.capauth provider: auto-sign with Tier B origin-binding. The
     // extension injects origin=window.location.origin and signs in-extension —
@@ -339,6 +347,79 @@ _PASSKEY_JS = r"""
         ticket: begin.ticket, credential: serializeAttestation(credential),
       });
     },
+  };
+})();
+"""
+
+
+_BUNKER_LOGIN_JS = r"""
+// CapAuth "sign in with your phone" for the OIDC IdP login page. Reuses the
+// deployed bunker E2E module (same origin) — the phone (bunker) signs the
+// canonical challenge over an X25519+AES-GCM channel; the broker stays blind.
+import { E2ESession } from "/bunker/lib/bunker-e2e.js";
+(function () {
+  const $ = (id) => document.getElementById(id);
+  function status(s) { const e = $("pq-status"); if (e) e.textContent = s; }
+  function err(m) { const e = $("err"); if (e) { e.textContent = m; e.style.display = "block"; } }
+
+  window.capauthPhoneLogin = async function () {
+    const base = window._capauthBase, reqId = window._capauthReqId, ch = window._capauthCh;
+    const fp = ($("fp").value || "").trim().toUpperCase().replace(/\s/g, "");
+    if (fp.length !== 40) return err("Enter your 40-hex fingerprint first.");
+    if (!ch) return err("Tab out of the fingerprint field to load a challenge first.");
+    const canonical = [
+      "CAPAUTH_NONCE_V1", "nonce=" + ch.nonce, "client_nonce=" + ch.client_nonce_echo,
+      "timestamp=" + ch.timestamp, "service=" + ch.service, "expires=" + ch.expires,
+    ].join("\n");
+    let sess;
+    try {
+      sess = await (await fetch(base + "/bunker/session", {
+        method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      })).json();
+    } catch (e) { return err("Could not start phone session: " + e.message); }
+    const img = $("pq-img"); if (img) img.src = sess.qr_data_url;
+    const uri = $("pq-uri"); if (uri) uri.textContent = sess.pairing_uri;
+    const box = $("pq"); if (box) box.style.display = "block";
+    status("Scan this QR with your phone (the CapAuth Bunker), then tap Approve…");
+    const e2e = new E2ESession(sess.pairing_secret);
+    try {
+      const resp = await new Promise((resolve, reject) => {
+        const wsurl = sess.relay_ws_url + "?session=" + encodeURIComponent(sess.session_id) +
+          "&role=client&key=" + encodeURIComponent(sess.pairing_secret);
+        const ws = new WebSocket(wsurl); let sent = false;
+        const t = setTimeout(() => { try { ws.close(); } catch (e) {} reject(new Error("Timed out waiting for your phone.")); }, 120000);
+        ws.onmessage = async (ev) => {
+          let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+          try {
+            if (m.type === "paired") { ws.send(JSON.stringify(await e2e.start())); }
+            else if (m.type === "kex") {
+              await e2e.onKex(m.pub);
+              if (!sent) {
+                sent = true; status("Paired — approve the sign-in on your phone.");
+                ws.send(JSON.stringify(await e2e.seal({
+                  type: "sign_request", id: "idp-" + Date.now(), payload: canonical,
+                  origin: location.origin, fingerprint: fp, version: "CAPAUTH_NONCE_V1",
+                })));
+              }
+            } else if (m.type === "enc") {
+              const inner = await e2e.open(m);
+              if (inner.type === "sign_response") { clearTimeout(t); ws.close(); resolve(inner); }
+              else if (inner.type === "reject") { clearTimeout(t); ws.close(); reject(new Error(inner.reason || "declined on phone")); }
+            } else if (m.type === "error") { clearTimeout(t); ws.close(); reject(new Error("relay: " + (m.code || "error"))); }
+            else if (m.type === "peer_left") { clearTimeout(t); ws.close(); reject(new Error("phone disconnected")); }
+          } catch (e) { clearTimeout(t); try { ws.close(); } catch (_) {} reject(e); }
+        };
+        ws.onerror = () => { clearTimeout(t); reject(new Error("relay connection error")); };
+      });
+      status("Signed — completing login…");
+      const r = await fetch(base + "/oidc/complete", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ request_id: reqId, fingerprint: resp.fingerprint || fp, nonce: ch.nonce, nonce_signature: resp.signature }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || d.error || "login failed");
+      window.location.href = d.redirect_to;
+    } catch (e) { err("Phone sign-in: " + e.message); status(""); }
   };
 })();
 """
@@ -713,6 +794,12 @@ def build_oidc_router(
         from fastapi.responses import Response
 
         return Response(content=_PASSKEY_JS, media_type="application/javascript")
+
+    @router.get("/bunker-login.js", summary="Sign-in-with-your-phone (bunker) helper")
+    async def bunker_login_js() -> Any:
+        from fastapi.responses import Response
+
+        return Response(content=_BUNKER_LOGIN_JS, media_type="application/javascript")
 
     # ------------------------------------------------------------------
     # Token endpoint
