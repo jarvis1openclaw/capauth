@@ -8,11 +8,15 @@
     "shared_secret_hex": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
     "pairing_secret": "pairing-secret-xyz",
     "nonce_hex": "0102030405060708090a0b0c",
-    "plaintext_utf8": "{\"type\":\"sign_request\",\"id\":\"r1\",\"payload\":\"X\"}"
+    "plaintext_utf8": "{\"type\":\"sign_request\",\"id\":\"r1\",\"payload\":\"X\"}",
+    "_comment_frag": "frag = the QR-only key fragment (active-MITM hardening). When present it is mixed into the HKDF info as info = 'capauth-bunker-e2e-v1\\nfrag=' + frag.",
+    "qr_fragment": "QRFRAG123"
   },
   "expected": {
     "aes_key_hex": "dee38807993a9d9a225ff37331214837d266dafa33309d0ceec21857338bb2d5",
     "_comment_ct": "wire ciphertext = nonce(12) || AES-GCM(ciphertext || 16-byte tag), hex-encoded",
-    "ciphertext_wire_hex": "0102030405060708090a0b0c0c22668c3190904a9e8f6aa44caae7c506f44ce337067ac4d93c9904109d650662b497632b6f1c40fc4b72de8704599000295dd2b40304cb857ea21beea7f1"
+    "ciphertext_wire_hex": "0102030405060708090a0b0c0c22668c3190904a9e8f6aa44caae7c506f44ce337067ac4d93c9904109d650662b497632b6f1c40fc4b72de8704599000295dd2b40304cb857ea21beea7f1",
+    "aes_key_with_frag_hex": "83e5c6414e8ab312cd3816ef86b90f55fc41d111750d2f872d12d77a2ee7dbf7",
+    "ciphertext_wire_with_frag_hex": "0102030405060708090a0b0ce2b649083b375bb5061f0ecb2cf2bbe6c8ae6a7fcb3f5ee1be4441608e6f228a27ec37662b454786bd9f719be3ed2ed592eba9bd9a22c1e2eb7d647a2267ab"
   }
 }

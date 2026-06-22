@@ -321,6 +321,7 @@ export class RemoteBunkerBackend {
     relayWsUrl,
     sessionId,
     pairingSecret,
+    frag,
     origin,
     relayRoundTrip,
     timeoutMs,
@@ -329,6 +330,9 @@ export class RemoteBunkerBackend {
     this.relayWsUrl = relayWsUrl || "";
     this.sessionId = sessionId || "";
     this.pairingSecret = pairingSecret || "";
+    // QR-only key fragment (active-MITM hardening). The pairing flow generates
+    // it locally and carries it ONLY in the QR/URI (never to the broker).
+    this.frag = frag || "";
     this.origin = origin || "";
     this.timeoutMs = timeoutMs || 120_000;
     this.relayRoundTrip = relayRoundTrip || ((req) => this._defaultRelay(req));
@@ -395,7 +399,7 @@ export class RemoteBunkerBackend {
       // E2E channel: on pair we exchange ephemeral X25519 pubkeys (kex), then
       // send the sign_request AES-GCM-sealed (enc). The broker relays only
       // kex + enc and never sees the canonical payload or the signature.
-      const e2e = new E2ESession(this.pairingSecret);
+      const e2e = new E2ESession(this.pairingSecret, this.frag);
       const url =
         `${this.relayWsUrl}?session=${encodeURIComponent(this.sessionId)}` +
         `&role=client&key=${encodeURIComponent(this.pairingSecret)}`;
@@ -515,6 +519,7 @@ export function createSignerBackend(settings = {}, hooks = {}) {
         relayWsUrl: pairing.relayWsUrl || settings.bunkerRelayWsUrl || "",
         sessionId: pairing.sessionId || "",
         pairingSecret: pairing.pairingSecret || "",
+        frag: pairing.frag || "",
         origin: hooks.origin || settings.origin || "",
         relayRoundTrip: hooks.relayRoundTrip,
       });

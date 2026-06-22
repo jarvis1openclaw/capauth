@@ -52,9 +52,16 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 E2E_SCHEME = "capauth-bunker-e2e-v1"
-_INFO = E2E_SCHEME.encode("utf-8")
 _NONCE_LEN = 12  # AES-GCM standard nonce length
 _KEY_LEN = 32  # AES-256
+
+
+def _info(frag: str = "") -> bytes:
+    """HKDF info. A non-empty ``frag`` (the QR-only key fragment, active-MITM
+    hardening — never seen by the broker) is mixed in so the broker cannot derive
+    the channel key even by substituting the relayed kex public keys."""
+    base = E2E_SCHEME
+    return (base if not frag else f"{base}\nfrag={frag}").encode("utf-8")
 
 
 def _b64e(raw: bytes) -> str:
@@ -77,27 +84,28 @@ def generate_keypair() -> tuple[X25519PrivateKey, str]:
     return priv, _b64e(pub_raw)
 
 
-def derive_key_from_shared(shared: bytes, pairing_secret: str) -> bytes:
+def derive_key_from_shared(shared: bytes, pairing_secret: str, frag: str = "") -> bytes:
     """HKDF-SHA256 the raw ECDH shared secret into a 32-byte AES key.
 
     Split out so the cross-impl vector can pin the KDF+AEAD layer with a known
-    shared secret (independent of the X25519 step).
+    shared secret (independent of the X25519 step). ``frag`` is the optional
+    QR-only key fragment (active-MITM hardening).
     """
     return HKDF(
         algorithm=hashes.SHA256(),
         length=_KEY_LEN,
         salt=pairing_secret.encode("utf-8"),
-        info=_INFO,
+        info=_info(frag),
     ).derive(shared)
 
 
 def derive_key(
-    my_priv: X25519PrivateKey, peer_pub_b64: str, pairing_secret: str
+    my_priv: X25519PrivateKey, peer_pub_b64: str, pairing_secret: str, frag: str = ""
 ) -> bytes:
     """Compute the shared AES key from our private key + the peer's public key."""
     peer_pub = X25519PublicKey.from_public_bytes(_b64d(peer_pub_b64))
     shared = my_priv.exchange(peer_pub)
-    return derive_key_from_shared(shared, pairing_secret)
+    return derive_key_from_shared(shared, pairing_secret, frag)
 
 
 def seal(key: bytes, obj: Any, *, nonce: Optional[bytes] = None) -> str:
@@ -129,8 +137,9 @@ class E2ESession:
     peer's kex arrives (derives the key), then :meth:`seal_msg` / :meth:`open`.
     """
 
-    def __init__(self, pairing_secret: str) -> None:
+    def __init__(self, pairing_secret: str, frag: str = "") -> None:
         self._pairing_secret = pairing_secret
+        self._frag = frag or ""
         self._priv: Optional[X25519PrivateKey] = None
         self._key: Optional[bytes] = None
 
@@ -143,7 +152,7 @@ class E2ESession:
         """Derive the shared AES key from the peer's kex public key."""
         if self._priv is None:
             raise RuntimeError("E2ESession.start() must be called before on_kex()")
-        self._key = derive_key(self._priv, peer_pub_b64, self._pairing_secret)
+        self._key = derive_key(self._priv, peer_pub_b64, self._pairing_secret, self._frag)
 
     @property
     def is_secure(self) -> bool:

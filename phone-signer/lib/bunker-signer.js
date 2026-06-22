@@ -16,7 +16,7 @@
  * @module bunker-signer
  */
 
-import { parseCanonical } from "./canonical.js";
+import { parseCanonical, rebuildCanonicalV2 } from "./canonical.js";
 import { E2ESession } from "./bunker-e2e.js";
 
 /**
@@ -39,6 +39,7 @@ export function startSigner({
   relayWsUrl,
   sessionId,
   pairingSecret,
+  frag = "",
   requestApproval,
   sign,
   getFingerprint,
@@ -53,7 +54,7 @@ export function startSigner({
   // E2E relay channel: on pairing both peers exchange ephemeral X25519 pubkeys
   // (kex) and AES-GCM-seal every sensitive message (enc). The broker only ever
   // relays kex + enc — it cannot read the canonical payload or the signature.
-  const e2e = new E2ESession(pairingSecret);
+  const e2e = new E2ESession(pairingSecret, frag);
 
   ws.onopen = () => onStatus("connected");
   ws.onclose = () => onStatus("closed");
@@ -109,6 +110,15 @@ export function startSigner({
 
   async function handleSignRequest(msg) {
     const { version, fields } = parseCanonical(msg.payload || "");
+    // Re-derivation cross-check (anti-smuggling): rebuild the canonical V2 bytes
+    // from the parsed fields and refuse to sign if they differ from what was
+    // relayed. Stops a malicious desktop from getting the human to approve a
+    // friendly-looking origin while signing different/extra bytes.
+    if (version === "CAPAUTH_NONCE_V2" && rebuildCanonicalV2(fields) !== msg.payload) {
+      await reply({ type: "reject", id: msg.id, reason: "non_canonical_payload" });
+      onStatus("error:non_canonical_payload");
+      return;
+    }
     const approved = await requestApproval({
       id: msg.id,
       payload: msg.payload,

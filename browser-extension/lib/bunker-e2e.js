@@ -35,6 +35,15 @@ const NONCE_LEN = 12; // AES-GCM standard nonce
 const _subtle = () => globalThis.crypto.subtle;
 const _enc = new TextEncoder();
 
+/**
+ * HKDF info. A non-empty `frag` (the QR-only key fragment — active-MITM
+ * hardening, never seen by the broker) is mixed in so the broker cannot derive
+ * the channel key even by substituting the relayed kex public keys.
+ */
+function infoBytes(frag) {
+  return _enc.encode(frag ? `${E2E_SCHEME}\nfrag=${frag}` : E2E_SCHEME);
+}
+
 function b64encode(bytes) {
   let s = "";
   const u = new Uint8Array(bytes);
@@ -66,7 +75,7 @@ export async function generateKexKeyPair() {
  * @param {string} pairingSecret
  * @returns {Promise<CryptoKey>}
  */
-export async function deriveKeyFromShared(sharedBytes, pairingSecret) {
+export async function deriveKeyFromShared(sharedBytes, pairingSecret, frag = "") {
   const ikm = await _subtle().importKey("raw", sharedBytes, "HKDF", false, [
     "deriveKey",
   ]);
@@ -75,7 +84,7 @@ export async function deriveKeyFromShared(sharedBytes, pairingSecret) {
       name: "HKDF",
       hash: "SHA-256",
       salt: _enc.encode(pairingSecret),
-      info: _enc.encode(E2E_SCHEME),
+      info: infoBytes(frag),
     },
     ikm,
     { name: "AES-GCM", length: 256 },
@@ -91,7 +100,7 @@ export async function deriveKeyFromShared(sharedBytes, pairingSecret) {
  * @param {string} pairingSecret
  * @returns {Promise<CryptoKey>}
  */
-export async function deriveSharedKey(privateKey, peerPubB64, pairingSecret) {
+export async function deriveSharedKey(privateKey, peerPubB64, pairingSecret, frag = "") {
   const peerPub = await _subtle().importKey(
     "raw",
     b64decode(peerPubB64),
@@ -104,7 +113,7 @@ export async function deriveSharedKey(privateKey, peerPubB64, pairingSecret) {
     privateKey,
     256
   );
-  return deriveKeyFromShared(new Uint8Array(sharedBits), pairingSecret);
+  return deriveKeyFromShared(new Uint8Array(sharedBits), pairingSecret, frag);
 }
 
 /**
@@ -144,8 +153,9 @@ export async function openMessage(aesKey, wireB64) {
  * the peer's kex arrives (derives the key) → `seal()` / `open()`.
  */
 export class E2ESession {
-  constructor(pairingSecret) {
+  constructor(pairingSecret, frag = "") {
     this.pairingSecret = pairingSecret || "";
+    this.frag = frag || "";
     this._kp = null;
     this._key = null;
   }
@@ -159,7 +169,12 @@ export class E2ESession {
   /** Derive the shared key from the peer's kex public key. */
   async onKex(peerPubB64) {
     if (!this._kp) throw new Error("start() must run before onKex()");
-    this._key = await deriveSharedKey(this._kp.privateKey, peerPubB64, this.pairingSecret);
+    this._key = await deriveSharedKey(
+      this._kp.privateKey,
+      peerPubB64,
+      this.pairingSecret,
+      this.frag
+    );
   }
 
   get isSecure() {

@@ -182,6 +182,35 @@ def test_approve_and_reject_are_relayed():
     assert "approve" in types and "reject" in types
 
 
+def test_kex_and_enc_are_relayed():
+    # E2E handshake + sealed envelopes must pass through the broker.
+    broker, sid, client_ws, signer_ws = _paired_broker()
+    assert run(broker.relay(sid, ROLE_CLIENT, {"type": "kex", "pub": "AAAA"})) is None
+    assert run(broker.relay(sid, ROLE_CLIENT, {"type": "enc", "id": "e1", "ct": "zzz"})) is None
+    types = [m["type"] for m in signer_ws.sent]
+    assert "kex" in types and "enc" in types
+
+
+def test_replay_duplicate_request_id_rejected():
+    # The same client request id may only be relayed once (replay guard).
+    broker, sid, _, _ = _paired_broker()
+    assert run(broker.relay(sid, ROLE_CLIENT, {"type": "enc", "id": "dup", "ct": "a"})) is None
+    err = run(broker.relay(sid, ROLE_CLIENT, {"type": "enc", "id": "dup", "ct": "a"}))
+    assert err == "duplicate_request"
+    # signer->client direction is not deduped (sign_response can echo the id).
+    assert run(broker.relay(sid, ROLE_SIGNER, {"type": "enc", "id": "dup", "ct": "b"})) is None
+
+
+def test_session_capacity_cap():
+    broker = BunkerBroker(max_sessions=2)
+    broker.create_session()
+    broker.create_session()
+    from capauth.service.bunker import BunkerCapacityError
+
+    with pytest.raises(BunkerCapacityError):
+        broker.create_session()
+
+
 # --- leave + expiry ----------------------------------------------------------
 
 

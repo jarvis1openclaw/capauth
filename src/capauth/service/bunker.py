@@ -79,9 +79,16 @@ logger = logging.getLogger("capauth.bunker")
 
 # Session lifetime: a pairing must complete + a sign must occur inside this.
 SESSION_TTL_SECONDS = 300  # 5 minutes
+# Backstop on concurrent in-memory sessions (DoS guard). Override via the
+# BunkerBroker(max_sessions=) ctor / CAPAUTH_BUNKER_MAX_SESSIONS env.
+MAX_ACTIVE_SESSIONS = 500
 ROLE_CLIENT = "client"
 ROLE_SIGNER = "signer"
 _ROLES = (ROLE_CLIENT, ROLE_SIGNER)
+
+
+class BunkerCapacityError(Exception):
+    """Raised when the broker is at its concurrent-session cap."""
 
 
 class WSLike(Protocol):
@@ -104,6 +111,10 @@ class _Session:
     ttl_seconds: int = SESSION_TTL_SECONDS
     created_at: float = field(default_factory=time.time)
     peers: dict[str, WSLike] = field(default_factory=dict)
+    # Request ids already relayed in this session — replay guard. A relayed
+    # sign_request/enc whose ``id`` was already seen is rejected, so a malicious
+    # or replaying peer cannot re-submit a prior (approved) request.
+    seen_ids: set[str] = field(default_factory=set)
 
     def is_expired(self, now: Optional[float] = None) -> bool:
         now = now if now is not None else time.time()
@@ -121,9 +132,14 @@ class BunkerBroker:
     and expire; nothing is persisted. Safe for the single-worker spike service.
     """
 
-    def __init__(self, ttl_seconds: int = SESSION_TTL_SECONDS) -> None:
+    def __init__(
+        self,
+        ttl_seconds: int = SESSION_TTL_SECONDS,
+        max_sessions: int = MAX_ACTIVE_SESSIONS,
+    ) -> None:
         self._sessions: dict[str, _Session] = {}
         self._ttl = ttl_seconds
+        self._max_sessions = max_sessions
         self._lock = asyncio.Lock()
 
     # -- pairing ----------------------------------------------------------
@@ -133,8 +149,14 @@ class BunkerBroker:
 
         Returns:
             dict with ``session_id`` and ``pairing_secret`` (both opaque).
+
+        Raises:
+            BunkerCapacityError: if too many sessions are already active (after
+                a GC sweep) — a DoS backstop.
         """
         self._gc()
+        if len(self._sessions) >= self._max_sessions:
+            raise BunkerCapacityError("too many active bunker sessions")
         session_id = secrets.token_urlsafe(12)
         pairing_secret = secrets.token_urlsafe(24)
         self._sessions[session_id] = _Session(
@@ -218,6 +240,14 @@ class BunkerBroker:
             session = self.get_session(session_id)
             if session is None:
                 return "unknown_session"
+            # Replay guard: a request-bearing message (the client's sign_request,
+            # or its sealed `enc` wrapper) may only be relayed once per session.
+            if mtype in ("sign_request", "enc") and from_role == ROLE_CLIENT:
+                rid = message.get("id")
+                if rid:
+                    if rid in session.seen_ids:
+                        return "duplicate_request"
+                    session.seen_ids.add(rid)
             target_role = ROLE_SIGNER if from_role == ROLE_CLIENT else ROLE_CLIENT
             target = session.peers.get(target_role)
         if target is None:

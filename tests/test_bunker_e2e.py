@@ -57,6 +57,33 @@ def test_vector_open_roundtrips():
     assert open_msg(key, wire) == json.loads(_VECTOR["inputs"]["plaintext_utf8"])
 
 
+def test_vector_with_frag_matches():
+    # active-MITM hardening: the QR-only frag is mixed into the HKDF info.
+    shared = binascii.unhexlify(_VECTOR["inputs"]["shared_secret_hex"])
+    frag = _VECTOR["inputs"]["qr_fragment"]
+    key = derive_key_from_shared(shared, _VECTOR["inputs"]["pairing_secret"], frag)
+    assert key.hex() == _VECTOR["expected"]["aes_key_with_frag_hex"]
+    nonce = binascii.unhexlify(_VECTOR["inputs"]["nonce_hex"])
+    obj = json.loads(_VECTOR["inputs"]["plaintext_utf8"])
+    wire = seal(key, obj, nonce=nonce)
+    import base64
+
+    assert (
+        binascii.hexlify(base64.b64decode(wire)).decode()
+        == _VECTOR["expected"]["ciphertext_wire_with_frag_hex"]
+    )
+
+
+def test_frag_mismatch_cannot_decrypt():
+    # A broker that substitutes kex keys but lacks the QR frag derives a
+    # different key and cannot read the channel.
+    a_priv, a_pub = generate_keypair()
+    b_priv, b_pub = generate_keypair()
+    wire = seal(derive_key(a_priv, b_pub, "p", "secret-frag"), {"id": "1", "x": 1})
+    with pytest.raises(Exception):
+        open_msg(derive_key(b_priv, a_pub, "p", ""), wire)  # no frag
+
+
 def test_x25519_ecdh_both_sides_agree():
     a_priv, a_pub = generate_keypair()
     b_priv, b_pub = generate_keypair()

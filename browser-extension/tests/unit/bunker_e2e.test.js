@@ -49,6 +49,31 @@ describe("bunker-e2e cross-impl vector", () => {
     expect(b64ToHex(wire)).toBe(VECTOR.expected.ciphertext_wire_hex);
   });
 
+  it("mixes the QR frag into the key (active-MITM hardening) — matches vector", async () => {
+    const shared = hex(VECTOR.inputs.shared_secret_hex);
+    const key = await deriveKeyFromShared(
+      shared,
+      VECTOR.inputs.pairing_secret,
+      VECTOR.inputs.qr_fragment
+    );
+    const nonce = hex(VECTOR.inputs.nonce_hex);
+    const obj = JSON.parse(VECTOR.inputs.plaintext_utf8);
+    const wire = await sealMessage(key, obj, nonce);
+    expect(b64ToHex(wire)).toBe(VECTOR.expected.ciphertext_wire_with_frag_hex);
+  });
+
+  it("a key derived WITHOUT the frag cannot open one sealed WITH it", async () => {
+    const shared = hex(VECTOR.inputs.shared_secret_hex);
+    const withFrag = await deriveKeyFromShared(
+      shared,
+      VECTOR.inputs.pairing_secret,
+      VECTOR.inputs.qr_fragment
+    );
+    const noFrag = await deriveKeyFromShared(shared, VECTOR.inputs.pairing_secret, "");
+    const wire = await sealMessage(withFrag, { id: "1" });
+    await expect(openMessage(noFrag, wire)).rejects.toBeTruthy();
+  });
+
   it("opens the vector ciphertext back to the original object", async () => {
     const shared = hex(VECTOR.inputs.shared_secret_hex);
     const key = await deriveKeyFromShared(shared, VECTOR.inputs.pairing_secret);

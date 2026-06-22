@@ -36,7 +36,7 @@ from ..authentik.nonce_store import issue, peek
 from ..authentik.stage import build_challenge, verify_auth_response
 from ..authentik.verifier import fingerprint_from_armor
 from .. import integration as _integration
-from .bunker import BunkerBroker, build_pairing_uri
+from .bunker import BunkerBroker, BunkerCapacityError, build_pairing_uri
 from .keystore import KeyStore
 from .oidc import build_oidc_router
 from .oidc.provider import discovery_document as _oidc_discovery_document
@@ -1257,7 +1257,36 @@ async def qr_verify_endpoint(nonce_id: str, req: VerifyRequest) -> dict[str, Any
 # never sees the private key. See bunker.py for the protocol + hardening notes.
 # ---------------------------------------------------------------------------
 
-_bunker = BunkerBroker()
+_bunker = BunkerBroker(
+    max_sessions=int(os.environ.get("CAPAUTH_BUNKER_MAX_SESSIONS", "500"))
+)
+
+# Simple in-memory sliding-window rate limiter for POST /bunker/session, keyed by
+# client IP. Defaults: 10 new sessions / 60s / IP. Tune via env. This is a DoS
+# backstop for the single-process broker — not a substitute for edge rate limits.
+_BUNKER_RL_MAX = int(os.environ.get("CAPAUTH_BUNKER_RL_MAX", "10"))
+_BUNKER_RL_WINDOW = float(os.environ.get("CAPAUTH_BUNKER_RL_WINDOW", "60"))
+_bunker_rl: dict[str, list[float]] = {}
+
+
+def _bunker_rate_ok(client_ip: str) -> bool:
+    now = time.time()
+    hits = [t for t in _bunker_rl.get(client_ip, []) if now - t < _BUNKER_RL_WINDOW]
+    if len(hits) >= _BUNKER_RL_MAX:
+        _bunker_rl[client_ip] = hits
+        return False
+    hits.append(now)
+    _bunker_rl[client_ip] = hits
+    return True
+
+
+def _bunker_auth_ok(request: Request) -> bool:
+    """Optional bearer auth on /bunker/session. Open when the env is unset."""
+    token = os.environ.get("CAPAUTH_BUNKER_AUTH_TOKEN", "")
+    if not token:
+        return True
+    header = request.headers.get("authorization", "")
+    return header.startswith("Bearer ") and secrets.compare_digest(header[7:], token)
 
 # Directory holding the phone-signer PWA static assets.
 _PHONE_SIGNER_DIR = Path(__file__).resolve().parent.parent.parent.parent / "phone-signer"
@@ -1301,14 +1330,25 @@ class BunkerSessionResponse(BaseModel):
 
 
 @app.post("/bunker/session", response_model=BunkerSessionResponse)
-async def bunker_create_session() -> dict[str, Any]:
+async def bunker_create_session(request: Request) -> dict[str, Any]:
     """Create a remote-signer pairing session and return the pairing URI + QR.
 
     The desktop client calls this, renders the QR, and connects to the relay as
     ``role=client``. The phone scans the QR (``capauth-bunker://...``), connects
     as ``role=signer``, and both receive a ``paired`` event.
+
+    Guarded by an optional bearer token (``CAPAUTH_BUNKER_AUTH_TOKEN``), a
+    per-IP rate limit, and a global session cap.
     """
-    created = _bunker.create_session()
+    if not _bunker_auth_ok(request):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    client_ip = request.client.host if request.client else "unknown"
+    if not _bunker_rate_ok(client_ip):
+        raise HTTPException(status_code=429, detail="rate limited; try again shortly")
+    try:
+        created = _bunker.create_session()
+    except BunkerCapacityError:
+        raise HTTPException(status_code=503, detail="broker at capacity; retry later")
     host = _broker_host()
     relay = _relay_ws_url(host)
     uri = build_pairing_uri(host, created["session_id"], created["pairing_secret"], relay)

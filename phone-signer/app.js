@@ -154,7 +154,16 @@ function parseBunkerUri(uri) {
   const sessionId = decodeURIComponent(m[2]);
   const params = new URLSearchParams(m[3]);
   const relay = params.get("relay") || `wss://${host}/bunker/ws`;
-  return { host, sessionId, pairingSecret: params.get("key") || "", relay };
+  return {
+    host,
+    sessionId,
+    pairingSecret: params.get("key") || "",
+    relay,
+    // QR-only key fragment (active-MITM hardening). Present only when the
+    // desktop rendered a frag-augmented URI; absent → plain E2E (passive-broker
+    // safe, no active-MITM resistance).
+    frag: params.get("f") || "",
+  };
 }
 
 function connect() {
@@ -173,6 +182,7 @@ function connect() {
     relayWsUrl: parsed.relay,
     sessionId: parsed.sessionId,
     pairingSecret: parsed.pairingSecret,
+    frag: parsed.frag,
     getFingerprint: () => session.fingerprint,
     requestApproval: showApproval,
     sign: async (canonicalPayload) => {
