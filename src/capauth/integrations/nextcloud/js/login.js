@@ -91,17 +91,22 @@
         // between client_nonce and timestamp); otherwise fall back to the
         // legacy V1 payload during the dual-accept migration window. The byte
         // layout MUST match the Python/PHP/stage implementations.
-        // NB: the challenge record exposes issued_at as `timestamp` and
-        // expires_at as `expires`; the origin field is `origin`.
+        // The challenge JSON carries `issued_at` / `expires_at` (NOT timestamp/
+        // expires) and `origin`. The server rebuilds the canonical from those
+        // exact fields on verify, so we MUST read the same names — earlier this
+        // read ch.timestamp/ch.expires (undefined) and produced an unsignable
+        // "timestamp=undefined" payload. Byte layout matches Python/PHP/stage.
+        const ts = ch.issued_at;
+        const exp = ch.expires_at;
         const origin = ch.origin;
         if (origin === undefined || origin === null || origin === '') {
             return [
                 'CAPAUTH_NONCE_V1',
                 `nonce=${ch.nonce}`,
                 `client_nonce=${ch.client_nonce_echo}`,
-                `timestamp=${ch.timestamp}`,
+                `timestamp=${ts}`,
                 `service=${ch.service}`,
-                `expires=${ch.expires}`,
+                `expires=${exp}`,
             ].join('\n');
         }
         return [
@@ -109,9 +114,9 @@
             `nonce=${ch.nonce}`,
             `client_nonce=${ch.client_nonce_echo}`,
             `origin=${origin}`,
-            `timestamp=${ch.timestamp}`,
+            `timestamp=${ts}`,
             `service=${ch.service}`,
-            `expires=${ch.expires}`,
+            `expires=${exp}`,
         ].join('\n');
     }
 
