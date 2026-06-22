@@ -1294,12 +1294,28 @@ def _bunker_auth_ok(request: Request) -> bool:
 _PHONE_SIGNER_DIR = Path(__file__).resolve().parent.parent.parent.parent / "phone-signer"
 
 
-def _broker_host() -> str:
+def _broker_host(request: Optional["Request"] = None) -> str:
     """Resolve the broker host advertised in the pairing URI.
 
-    Prefers ``CAPAUTH_BUNKER_HOST`` (e.g. a Tailscale Funnel host) then
-    ``CAPAUTH_BASE_URL`` host, then ``SERVICE_ID``.
+    Resolution order:
+      1. The request's own (forwarded) host IF it is in the allow-list
+         ``CAPAUTH_BUNKER_HOSTS`` (comma-separated). This lets the SAME service
+         serve multiple transports — the Cloudflare tunnel AND a Tailscale Funnel
+         — each producing *native* pairing URIs (so the funnel is a true
+         independent transport, usable even when CF is down). The allow-list
+         prevents a client from spoofing an arbitrary Host into the pairing URI.
+      2. ``CAPAUTH_BUNKER_HOST`` — a forced override / default.
+      3. ``CAPAUTH_BASE_URL`` host, then ``SERVICE_ID``.
     """
+    allowed = [h.strip() for h in os.environ.get("CAPAUTH_BUNKER_HOSTS", "").split(",") if h.strip()]
+    if request is not None and allowed:
+        cand = (
+            request.headers.get("x-forwarded-host")
+            or request.headers.get("host")
+            or ""
+        ).split(",")[0].strip()
+        if cand in allowed:
+            return cand
     explicit = os.environ.get("CAPAUTH_BUNKER_HOST", "")
     if explicit:
         return explicit
@@ -1351,7 +1367,7 @@ async def bunker_create_session(request: Request) -> dict[str, Any]:
         created = _bunker.create_session()
     except BunkerCapacityError:
         raise HTTPException(status_code=503, detail="broker at capacity; retry later")
-    host = _broker_host()
+    host = _broker_host(request)
     relay = _relay_ws_url(host)
     uri = build_pairing_uri(host, created["session_id"], created["pairing_secret"], relay)
 
