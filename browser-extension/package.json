@@ -4,6 +4,8 @@
   "private": true,
   "description": "CapAuth browser extension — one-click passwordless PGP login",
   "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
     "build": "node scripts/build.js",
     "build:firefox": "node scripts/build.js --firefox",
     "build:icons": "node scripts/generate-icons.js",
@@ -16,6 +18,8 @@
     "openpgp": "^5.11.0"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0"
+    "esbuild": "^0.24.0",
+    "happy-dom": "^15.11.7",
+    "vitest": "^2.1.9"
   }
 }

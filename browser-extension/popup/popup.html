@@ -39,6 +39,34 @@
     </div>
   </div>
 
+  <!-- Origin-consent prompt (phishing-resistant; shows the REAL origin) -->
+  <div class="consent-section" id="consent-section" style="display:none">
+    <div class="consent-card" id="consent-card">
+      <div class="consent-title">Signature requested</div>
+      <div class="consent-body">
+        <span class="consent-label">Origin</span>
+        <div class="consent-origin" id="consent-origin">https://example.org</div>
+        <div class="consent-warn" id="consent-warn">
+          Only approve if this is where you intend to sign in. Check the address
+          carefully — a phishing site will show its own domain here.
+        </div>
+      </div>
+      <div class="consent-actions">
+        <button class="btn btn-danger" id="consent-deny">Deny</button>
+        <button class="btn btn-primary" id="consent-allow">Allow</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Unlock section (key locked) -->
+  <div class="unlock-section" id="unlock-section" style="display:none">
+    <div class="section-label">Unlock signing key</div>
+    <input type="password" id="unlock-passphrase" placeholder="Key passphrase"
+           autocomplete="off" />
+    <button class="btn btn-primary" id="btn-unlock">Unlock</button>
+    <div class="unlock-error" id="unlock-error" style="display:none"></div>
+  </div>
+
   <!-- Identity Section -->
   <div class="identity-section" id="identity-section">
     <div class="fingerprint-label">PGP Fingerprint</div>

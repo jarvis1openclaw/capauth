@@ -121,12 +121,32 @@
         stepFp.style.display = 'none';
         stepChallenge.style.display = '';
 
-        // Extension detection.
-        const isExtension = document.cookie.includes('capauth_ext=1')
+        // Browser-extension integration.
+        //
+        // Preferred path: the `window.capauth` provider (NIP-07 style). When
+        // present we ask it to sign the challenge — the extension injects
+        // `origin = window.location.origin` itself (Tier B origin-binding) and
+        // signs in-extension, so the private key never touches this page. We do
+        // NOT pass our own origin to signChallenge; the extension is the
+        // authority on it.
+        const hasProvider = !!(window.capauth && window.capauth.isCapAuth);
+        const isLegacyExtension = document.cookie.includes('capauth_ext=1')
             || (window.__capauth_extension === true);
-        if (isExtension && extNotice) {
+
+        if ((hasProvider || isLegacyExtension) && extNotice) {
             extNotice.style.display = '';
-            // Dispatch event for extension to pick up.
+        }
+
+        if (hasProvider) {
+            // Auto-sign through window.capauth.
+            window.capauth.signChallenge(ch).then(function (res) {
+                submitSignature(res.signature, {}, '', '');
+            }).catch(function (err) {
+                // Denied/locked — fall back to the paste box silently.
+                console.warn('[capauth] provider sign failed:', err && err.message);
+            });
+        } else if (isLegacyExtension) {
+            // Legacy event-bridge extensions.
             window.dispatchEvent(new CustomEvent('capauth:challenge', { detail: ch }));
         }
 

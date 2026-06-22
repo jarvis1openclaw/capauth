@@ -249,15 +249,105 @@ async function initiateSignIn() {
 }
 
 // ---------------------------------------------------------------------------
+// Origin-consent prompt (phishing-resistant) — window.capauth signing
+// ---------------------------------------------------------------------------
+
+/**
+ * Poll the background for pending signature-consent requests and render the
+ * topmost one. The user sees the REAL requesting origin, so a phished login on
+ * evil.example surfaces evil.example here.
+ */
+async function refreshConsents() {
+  let consents = [];
+  try {
+    const res = await bg("PROVIDER_LIST_CONSENTS");
+    consents = (res && res.consents) || [];
+  } catch {
+    consents = [];
+  }
+
+  const section = $("consent-section");
+  if (!consents.length) {
+    section.style.display = "none";
+    return;
+  }
+
+  const c = consents[0];
+  $("consent-origin").textContent = c.origin || "(unknown origin)";
+  section.style.display = "block";
+
+  const allowBtn = $("consent-allow");
+  const denyBtn = $("consent-deny");
+
+  // Replace listeners so we always resolve the CURRENT consent id.
+  allowBtn.onclick = async () => {
+    await bg("PROVIDER_CONSENT_RESOLVE", { id: c.id, allow: true });
+    await refreshConsents();
+  };
+  denyBtn.onclick = async () => {
+    await bg("PROVIDER_CONSENT_RESOLVE", { id: c.id, allow: false });
+    await refreshConsents();
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Key unlock
+// ---------------------------------------------------------------------------
+
+async function refreshUnlock() {
+  const section = $("unlock-section");
+  let unlocked = false;
+  try {
+    const res = await bg("UNLOCK_STATUS");
+    unlocked = !!(res && res.unlocked);
+  } catch {
+    unlocked = false;
+  }
+  // Show the unlock box only when a key exists but the session is locked.
+  const status = await bg("CHECK_STATUS").catch(() => ({}));
+  const needsUnlock = status.hasPrivateKey && !unlocked;
+  section.style.display = needsUnlock ? "block" : "none";
+}
+
+async function doUnlock() {
+  const passphrase = $("unlock-passphrase").value;
+  const errEl = $("unlock-error");
+  errEl.style.display = "none";
+  try {
+    const res = await bg("UNLOCK_KEY", { passphrase });
+    if (res && res.success) {
+      $("unlock-passphrase").value = "";
+      showToast("Key unlocked", "success");
+      await refreshUnlock();
+    } else {
+      errEl.textContent = (res && res.error) || "Unlock failed.";
+      errEl.style.display = "block";
+    }
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = "block";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 
 async function init() {
   // Load status
   await updateStatus();
+  await refreshConsents();
+  await refreshUnlock();
+
+  // Keep consent prompts fresh while the popup is open.
+  setInterval(refreshConsents, 1000);
 
   // Event listeners
   $("btn-signin").addEventListener("click", initiateSignIn);
+  $("btn-unlock").addEventListener("click", doUnlock);
+  $("unlock-passphrase").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") doUnlock();
+  });
 
   $("btn-settings").addEventListener("click", () => {
     // Open the options page in a new tab

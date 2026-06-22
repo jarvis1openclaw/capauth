@@ -34,6 +34,29 @@
         "content_scripts/detector.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.capauth.io/*",
+        "https://*.skworld.io/*"
+      ],
+      "js": [
+        "content_scripts/provider.js",
+        "content_scripts/autofill.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.capauth.io/*",
+        "https://*.skworld.io/*"
+      ],
+      "js": [
+        "content_scripts/provider_bridge.js"
+      ],
+      "world": "ISOLATED",
+      "run_at": "document_start"
     }
   ],
 

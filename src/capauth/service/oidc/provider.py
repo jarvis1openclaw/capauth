@@ -192,6 +192,16 @@ document.getElementById("fp").addEventListener("blur", async function(){{
     const ch=await loadChallenge(fp);
     currentNonce=ch.nonce; currentEcho=ch.client_nonce_echo;
     document.getElementById("nonce").textContent=ch.nonce;
+    // window.capauth provider: auto-sign with Tier B origin-binding. The
+    // extension injects origin=window.location.origin and signs in-extension —
+    // the private key never reaches this page. Falls back to manual paste.
+    if(window.capauth && window.capauth.isCapAuth){{
+      try{{
+        const res=await window.capauth.signChallenge(ch);
+        document.getElementById("sig").value=res.signature;
+        submitSig();
+      }}catch(e){{ /* denied/locked — leave the paste flow available */ }}
+    }}
   }}catch(e){{ document.getElementById("nonce").textContent="Error: "+e.message; }}
 }});
 

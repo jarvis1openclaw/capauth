@@ -33,6 +33,107 @@ const TOKEN_STORAGE_PREFIX = "capauth_token_";
 const SETTINGS_KEY = "capauth_settings";
 
 // ---------------------------------------------------------------------------
+// In-memory key unlock session
+// ---------------------------------------------------------------------------
+//
+// The unlocked passphrase is held in service-worker memory ONLY (never written
+// to storage) so `window.capauth.signChallenge()` can sign without re-prompting
+// on every call. It is cleared when the session expires or the worker restarts.
+//
+// STUB (follow-up): at-rest encryption of the stored private key. Today the
+// armored private key lives in chrome.storage.local (see options.js). The
+// intended hardening is to store it encrypted (passphrase-derived key via
+// WebCrypto PBKDF2/AES-GCM) and decrypt into memory on unlock. The unlock
+// plumbing below is structured for that; the encryption itself is not yet
+// implemented — documented in browser-extension/README.md.
+const UNLOCK_TTL_MS = 15 * 60_000; // 15 min unlock window
+let unlockSession = null; // { passphrase, unlockedAt, expiresAt }
+
+function isUnlocked() {
+  return !!(unlockSession && Date.now() < unlockSession.expiresAt);
+}
+
+function setUnlock(passphrase) {
+  unlockSession = {
+    passphrase: passphrase || "",
+    unlockedAt: Date.now(),
+    expiresAt: Date.now() + UNLOCK_TTL_MS,
+  };
+}
+
+function clearUnlock() {
+  unlockSession = null;
+}
+
+/**
+ * Resolve the passphrase to use for signing.
+ *
+ * Precedence: an explicit per-call passphrase > the active unlock session > "".
+ * An empty string is valid for unprotected keys.
+ */
+function resolvePassphrase(explicit) {
+  if (explicit) return explicit;
+  if (isUnlocked()) return unlockSession.passphrase;
+  return "";
+}
+
+// ---------------------------------------------------------------------------
+// Origin-consent prompts (anti-phishing)
+// ---------------------------------------------------------------------------
+//
+// pendingConsent: requestId -> { resolve, origin, fingerprint, createdAt }
+// The popup renders these and calls back with PROVIDER_CONSENT_RESOLVE.
+const pendingConsent = new Map();
+
+function makeConsentId() {
+  return (crypto.randomUUID && crypto.randomUUID()) || `c-${Date.now()}-${Math.random()}`;
+}
+
+/**
+ * Ask the user to approve signing for a specific origin.
+ *
+ * Opens the extension popup (which lists pending consents and shows the REAL
+ * requesting origin so a phished user sees `https://evil.example`). Resolves
+ * with true (allow) / false (deny). Auto-denies after 60s.
+ *
+ * @param {string} origin - The browser-attested origin requesting a signature.
+ * @param {string} fingerprint - Fingerprint that would sign.
+ * @returns {Promise<boolean>}
+ */
+function requestOriginConsent(origin, fingerprint) {
+  return new Promise((resolve) => {
+    const id = makeConsentId();
+    const timer = setTimeout(() => {
+      if (pendingConsent.has(id)) {
+        pendingConsent.delete(id);
+        resolve(false);
+      }
+    }, 60_000);
+
+    pendingConsent.set(id, {
+      resolve: (allow) => {
+        clearTimeout(timer);
+        resolve(allow);
+      },
+      origin,
+      fingerprint,
+      createdAt: Date.now(),
+    });
+
+    // Surface a badge + try to open the popup so the user sees the prompt.
+    try {
+      chrome.action.setBadgeText({ text: String(pendingConsent.size) });
+      chrome.action.setBadgeBackgroundColor({ color: "#7C3AED" });
+    } catch {
+      /* setBadge unavailable in some contexts */
+    }
+    if (chrome.action.openPopup) {
+      chrome.action.openPopup().catch(() => {});
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // CapAuth Client
 // ---------------------------------------------------------------------------
 
@@ -372,6 +473,38 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       handleQRLogin(payload).then(sendResponse);
       break;
 
+    // --- window.capauth provider (NIP-07 analog) ---
+    case "PROVIDER_GET_FINGERPRINT":
+      handleProviderGetFingerprint(payload).then(sendResponse);
+      break;
+
+    case "PROVIDER_SIGN_CHALLENGE":
+      handleProviderSignChallenge(payload).then(sendResponse);
+      break;
+
+    // --- key unlock session ---
+    case "UNLOCK_KEY":
+      handleUnlockKey(payload).then(sendResponse);
+      break;
+
+    case "LOCK_KEY":
+      clearUnlock();
+      sendResponse({ success: true, unlocked: false });
+      break;
+
+    case "UNLOCK_STATUS":
+      sendResponse({ success: true, unlocked: isUnlocked() });
+      break;
+
+    // --- origin-consent (popup callbacks) ---
+    case "PROVIDER_LIST_CONSENTS":
+      sendResponse({ success: true, consents: listPendingConsents() });
+      break;
+
+    case "PROVIDER_CONSENT_RESOLVE":
+      sendResponse(resolveConsent(payload));
+      break;
+
     default:
       sendResponse({ error: `Unknown action: ${action}` });
   }
@@ -671,6 +804,150 @@ async function handleQRLogin(payload) {
   } catch (err) {
     return { success: false, error: err.message };
   }
+}
+
+// ---------------------------------------------------------------------------
+// window.capauth provider handlers (NIP-07 analog)
+// ---------------------------------------------------------------------------
+
+/**
+ * Provider: return the configured fingerprint to the page (no key material).
+ *
+ * @param {Object} payload
+ * @param {string} payload.origin - Browser-attested requesting origin (logged).
+ * @returns {Promise<Object>} { success, fingerprint }
+ */
+async function handleProviderGetFingerprint(payload) {
+  try {
+    const settings = await loadSettings();
+    const fingerprint = settings.fingerprint || "";
+    if (!fingerprint) {
+      return { success: false, error: "No PGP identity configured in CapAuth." };
+    }
+    return { success: true, fingerprint };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Provider: sign a challenge for `window.capauth.signChallenge()`.
+ *
+ * TIER B ORIGIN-BINDING — the load-bearing handler:
+ *   - `payload.challenge.origin` and `payload.origin` are set by the ISOLATED-
+ *     world bridge from the real `window.location.origin`; the page cannot
+ *     forge them.
+ *   - We ALWAYS build the V2 canonical payload with that origin (never V1, and
+ *     never an origin supplied by the page itself).
+ *   - The user must approve the specific origin (phishing-resistant consent —
+ *     the popup shows the real origin, so a relayed login on evil.example
+ *     surfaces evil.example).
+ *
+ * The private key never leaves the service worker. Signing uses the unlocked
+ * session passphrase (or an unprotected key).
+ *
+ * @param {Object} payload
+ * @param {Object} payload.challenge - Challenge incl. browser-attested origin.
+ * @param {string} payload.origin - The browser-attested origin (duplicate).
+ * @returns {Promise<Object>} { success, signature, fingerprint, origin, canonical }
+ */
+async function handleProviderSignChallenge(payload) {
+  const { challenge, origin } = payload || {};
+
+  if (!challenge || !challenge.nonce) {
+    return { success: false, error: "Challenge with a nonce is required." };
+  }
+  if (!origin || !challenge.origin || origin !== challenge.origin) {
+    // Defensive: the bridge sets both from the same source; a mismatch means
+    // tampering. Refuse rather than sign an ambiguous origin.
+    return { success: false, error: "Origin attestation missing or inconsistent." };
+  }
+
+  try {
+    const settings = await loadSettings();
+    const fingerprint = settings.fingerprint || "";
+    const keyArmored = settings.privateKeyArmored || "";
+    if (!fingerprint || !keyArmored) {
+      return { success: false, error: "No PGP key configured. Import your key in CapAuth settings." };
+    }
+
+    // Phishing-resistant consent: the user must approve THIS origin.
+    const allowed = await requestOriginConsent(origin, fingerprint);
+    if (!allowed) {
+      return { success: false, error: `Signing denied for origin ${origin}.` };
+    }
+
+    // Build the EXACT CAPAUTH_NONCE_V2 bytes (origin = the real page origin).
+    const canonical = buildCanonicalNoncePayload({
+      nonce: challenge.nonce,
+      clientNonce: challenge.client_nonce_echo,
+      origin, // Tier B: browser-attested, never page-supplied
+      timestamp: challenge.timestamp,
+      service: challenge.service,
+      expires: challenge.expires,
+    });
+
+    const passphrase = resolvePassphrase(challenge.passphrase);
+    const signature = await signMessage(canonical, keyArmored, passphrase);
+
+    return { success: true, signature, fingerprint, origin, canonical };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Unlock the signing key for the current service-worker session.
+ *
+ * Verifies the passphrase actually decrypts the stored key, then caches it in
+ * memory (never storage) for UNLOCK_TTL_MS.
+ *
+ * @param {Object} payload
+ * @param {string} payload.passphrase
+ * @returns {Promise<Object>} { success, unlocked }
+ */
+async function handleUnlockKey(payload) {
+  const { passphrase = "" } = payload || {};
+  try {
+    const settings = await loadSettings();
+    const keyArmored = settings.privateKeyArmored || "";
+    if (!keyArmored) {
+      return { success: false, error: "No private key imported." };
+    }
+    // Prove the passphrase works by performing a throwaway signature.
+    await signMessage("capauth-unlock-probe", keyArmored, passphrase);
+    setUnlock(passphrase);
+    return { success: true, unlocked: true };
+  } catch (err) {
+    clearUnlock();
+    return { success: false, error: "Incorrect passphrase or unreadable key." };
+  }
+}
+
+// --- origin-consent registry helpers (popup-facing) ---
+
+function listPendingConsents() {
+  return Array.from(pendingConsent.entries()).map(([id, c]) => ({
+    id,
+    origin: c.origin,
+    fingerprint: c.fingerprint,
+    createdAt: c.createdAt,
+  }));
+}
+
+function resolveConsent(payload) {
+  const { id, allow } = payload || {};
+  const entry = pendingConsent.get(id);
+  if (!entry) return { success: false, error: "Unknown or expired consent request." };
+  pendingConsent.delete(id);
+  entry.resolve(!!allow);
+  try {
+    const remaining = pendingConsent.size;
+    chrome.action.setBadgeText({ text: remaining ? String(remaining) : "" });
+  } catch {
+    /* ignore */
+  }
+  return { success: true };
 }
 
 // ---------------------------------------------------------------------------
