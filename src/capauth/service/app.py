@@ -37,6 +37,8 @@ from ..authentik.stage import build_challenge, verify_auth_response
 from ..authentik.verifier import fingerprint_from_armor
 from .. import integration as _integration
 from .keystore import KeyStore
+from .oidc import build_oidc_router
+from .oidc.provider import discovery_document as _oidc_discovery_document
 
 logger = logging.getLogger("capauth.service")
 
@@ -85,6 +87,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# OIDC/OAuth2 Identity Provider (Track-2: CapAuth as its own IdP / Authentik
+# OAuth Source). Mounted at /oidc. The discovery doc is also aliased at the
+# service root (/.well-known/oidc-idp-configuration) so generic clients that
+# only know the issuer can autodiscover. See docs/CAPAUTH_OIDC_IDP.md.
+# ---------------------------------------------------------------------------
+_oidc_router = build_oidc_router()
+app.include_router(_oidc_router, prefix="/oidc")
+
+
+@app.get("/.well-known/oidc-idp-configuration")
+async def oidc_idp_discovery_alias() -> dict[str, Any]:
+    """Root-level alias of the CapAuth OIDC IdP discovery document.
+
+    The canonical discovery URL is ``/oidc/.well-known/openid-configuration``
+    (issuer is the service base; configure Authentik with that URL). This alias
+    avoids colliding with the legacy consumer-facing
+    ``/.well-known/openid-configuration`` document already served below.
+    """
+    return _oidc_discovery_document()
+
 
 _keystore: Optional[KeyStore] = None
 
