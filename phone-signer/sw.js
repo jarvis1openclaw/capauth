@@ -5,17 +5,19 @@
  * key-management UI. The WebSocket relay obviously needs the network. OpenPGP.js
  * is vendored locally (vendor/openpgp.min.js) and precached — no CDN dependency.
  */
-const CACHE = "capauth-bunker-v3";
+const CACHE = "capauth-bunker-v4";
 const SHELL = [
   "./",
   "./index.html",
   "./app.js",
   "./manifest.webmanifest",
   "./vendor/openpgp.min.js",
+  "./vendor/qrcode-generator.js",
   "./lib/keyvault.js",
   "./lib/canonical.js",
   "./lib/bunker-signer.js",
   "./lib/bunker-e2e.js",
+  "./lib/keyqr.js",
 ];
 
 self.addEventListener("install", (e) => {

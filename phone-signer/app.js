@@ -14,6 +14,7 @@
 
 import { encryptPrivateKey, decryptPrivateKey, isEncryptedEnvelope } from "./lib/keyvault.js";
 import { startSigner } from "./lib/bunker-signer.js?v=3";
+import { chunkPayload, parseKeyFrame, KeyFrameCollector } from "./lib/keyqr.js";
 
 const openpgp = globalThis.openpgp;
 const STORE_KEY = "capauth_bunker_envelope";
@@ -248,9 +249,93 @@ function showApproval(req) {
   });
 }
 
+// --- Key transfer via QR: show this device's key as an (animated) QR ---------
+let _qrTimer = null;
+
+async function showKeyQR() {
+  const armored = $("priv-key").value.trim();
+  const pin = $("xfer-pin").value;
+  const st = $("qr-status");
+  if (!armored) return setStatus(st, "Paste your armored key above first.", "err");
+  try {
+    await openpgp.readPrivateKey({ armoredKey: armored }); // validate
+  } catch {
+    return setStatus(st, "That doesn't look like a private key.", "err");
+  }
+  let payload, warn;
+  if (pin) {
+    payload = JSON.stringify(await encryptPrivateKey(armored, pin));
+    warn = "🔒 PIN-encrypted. The other device asks for this PIN after scanning.";
+  } else {
+    if (!confirm("Show your UNENCRYPTED private key as a QR? Anyone who photographs it gets your key. Set a Transfer PIN to protect it.")) {
+      return;
+    }
+    payload = armored;
+    warn = "⚠ UNENCRYPTED private key — only show this to your own device's camera.";
+  }
+  const frames = chunkPayload(payload);
+  $("qr-warn").textContent = warn;
+  $("qr-box").classList.remove("hidden");
+  if (!("qrcode" in globalThis)) return setStatus(st, "QR generator unavailable.", "err");
+  let i = 0;
+  const render = () => {
+    const qr = globalThis.qrcode(0, "M");
+    qr.addData(frames[i]);
+    qr.make();
+    $("qr-img").src = qr.createDataURL(6, 8);
+    setStatus(
+      st,
+      frames.length > 1 ? `Frame ${i + 1}/${frames.length} — keep the other camera pointed here.` : "Scan this with your other device.",
+      ""
+    );
+    i = (i + 1) % frames.length;
+  };
+  render();
+  if (_qrTimer) clearInterval(_qrTimer);
+  if (frames.length > 1) _qrTimer = setInterval(render, 350); // ~3 fps cycle
+}
+
+function hideKeyQR() {
+  if (_qrTimer) {
+    clearInterval(_qrTimer);
+    _qrTimer = null;
+  }
+  $("qr-box").classList.add("hidden");
+  $("qr-img").src = "";
+  $("xfer-pin").value = "";
+}
+
 // --- Camera QR scan (scan the pairing QR instead of pasting) -----------------
 let _scanStream = null;
 let _scanRAF = null;
+let _keyCollector = null;
+
+// Handle a fully-reassembled key payload scanned from another device.
+async function handleScannedKey(payload) {
+  const ps = $("pair-status");
+  let armored = payload;
+  if (!payload.startsWith("-----BEGIN PGP")) {
+    // PIN-encrypted envelope — ask for the transfer PIN and decrypt.
+    let env;
+    try {
+      env = JSON.parse(payload);
+    } catch {
+      return setStatus(ps, "Scanned data wasn't a key.", "err");
+    }
+    if (!isEncryptedEnvelope(env)) return setStatus(ps, "Scanned data wasn't a key.", "err");
+    const pin = typeof prompt === "function" ? prompt("Enter the Transfer PIN shown on the other device:") : "";
+    if (!pin) return setStatus(ps, "Transfer PIN required to decrypt the scanned key.", "err");
+    try {
+      armored = await decryptPrivateKey(env, pin);
+    } catch {
+      return setStatus(ps, "Wrong Transfer PIN — could not decrypt the key.", "err");
+    }
+  }
+  $("priv-key").value = armored;
+  $("key-import").scrollIntoView({ behavior: "smooth", block: "center" });
+  setStatus($("key-status"), "✅ Key received via QR — set a vault passphrase and tap Encrypt & store.", "ok");
+  setStatus(ps, "Key received from the other device.", "ok");
+}
 
 async function startScan() {
   const ps = $("pair-status");
@@ -268,24 +353,36 @@ async function startScan() {
     video.srcObject = _scanStream;
     await video.play();
     $("scan-box").classList.remove("hidden");
-    setStatus(ps, "Point the camera at the Bunker QR…");
+    setStatus(ps, "Point the camera at a Bunker QR or a key-transfer QR…");
+    _keyCollector = new KeyFrameCollector();
     const detector = new BarcodeDetector({ formats: ["qr_code"] });
     const tick = async () => {
       if (!_scanStream) return;
       try {
         const codes = await detector.detect(video);
-        const hit = codes
-          .map((c) => c.rawValue)
-          .find((v) => v && v.startsWith("capauth-bunker://"));
-        if (hit) {
-          $("bunker-uri").value = hit;
-          stopScan();
-          setStatus(
-            ps,
-            session.armoredKey ? "Scanned ✓ — tap Connect." : "Scanned ✓ — unlock a key, then Connect.",
-            "ok"
-          );
-          return;
+        for (const c of codes) {
+          const v = c.rawValue;
+          if (!v) continue;
+          if (v.startsWith("capauth-bunker://")) {
+            $("bunker-uri").value = v;
+            stopScan();
+            setStatus(
+              ps,
+              session.armoredKey ? "Scanned ✓ — tap Connect." : "Scanned ✓ — unlock a key, then Connect.",
+              "ok"
+            );
+            return;
+          }
+          const frame = parseKeyFrame(v);
+          if (frame && _keyCollector.add(frame)) {
+            setStatus(ps, `Receiving key… ${_keyCollector.received}/${_keyCollector.total} frames`);
+            if (_keyCollector.complete) {
+              const payload = _keyCollector.assemble();
+              stopScan();
+              await handleScannedKey(payload);
+              return;
+            }
+          }
         }
       } catch {
         /* transient detect error — keep scanning */
@@ -360,6 +457,8 @@ $("btn-pair").onclick = connect;
 $("btn-push").onclick = enablePush;
 $("btn-scan").onclick = startScan;
 $("btn-scan-stop").onclick = stopScan;
+$("btn-show-qr").onclick = showKeyQR;
+$("btn-hide-qr").onclick = hideKeyQR;
 
 // Allow opening with the URI pre-filled: /bunker/?uri=... or #capauth-bunker://
 const fromQuery = new URLSearchParams(location.search).get("uri");
