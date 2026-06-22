@@ -55,6 +55,11 @@
       display:inline-block; margin:1px 0;
     }
     details.hint summary { cursor:pointer; color:var(--accent2); }
+    #scan-box { margin-top:12px; }
+    #scan-video {
+      width:100%; max-height:280px; border-radius:12px; background:#000;
+      border:1px solid rgba(124,58,237,.4); object-fit:cover;
+    }
     .pill { display:inline-block; background:rgba(124,58,237,.15); border:1px solid rgba(124,58,237,.4);
       border-radius:999px; padding:3px 10px; font-size:11px; color:var(--accent2); }
     .fp { font-family:monospace; color:var(--cyan); font-size:11px; word-break:break-all; }
@@ -134,7 +139,14 @@
     <label>Bunker URI (scan QR or paste)</label>
     <input id="bunker-uri" placeholder="capauth-bunker://host/session?key=..." />
     <div class="hint">When you start a login on your computer it shows a QR / <code>capauth-bunker://…</code> link. Scan or paste it here, then Connect — this phone signs the login request.</div>
-    <button id="btn-pair" disabled>Connect</button>
+    <div class="row">
+      <button id="btn-scan" class="secondary">📷 Scan QR</button>
+      <button id="btn-pair" disabled>Connect</button>
+    </div>
+    <div id="scan-box" class="hidden">
+      <video id="scan-video" playsinline muted></video>
+      <button id="btn-scan-stop" class="secondary">Stop camera</button>
+    </div>
     <div id="pair-status" class="status">Load + unlock a key first.</div>
   </section>
 

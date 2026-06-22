@@ -248,6 +248,69 @@ function showApproval(req) {
   });
 }
 
+// --- Camera QR scan (scan the pairing QR instead of pasting) -----------------
+let _scanStream = null;
+let _scanRAF = null;
+
+async function startScan() {
+  const ps = $("pair-status");
+  if (!("BarcodeDetector" in window)) {
+    return setStatus(ps, "Camera scanning isn't supported on this browser — paste the URI instead.", "err");
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return setStatus(ps, "No camera access here — paste the URI instead.", "err");
+  }
+  try {
+    _scanStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" },
+    });
+    const video = $("scan-video");
+    video.srcObject = _scanStream;
+    await video.play();
+    $("scan-box").classList.remove("hidden");
+    setStatus(ps, "Point the camera at the Bunker QR…");
+    const detector = new BarcodeDetector({ formats: ["qr_code"] });
+    const tick = async () => {
+      if (!_scanStream) return;
+      try {
+        const codes = await detector.detect(video);
+        const hit = codes
+          .map((c) => c.rawValue)
+          .find((v) => v && v.startsWith("capauth-bunker://"));
+        if (hit) {
+          $("bunker-uri").value = hit;
+          stopScan();
+          setStatus(
+            ps,
+            session.armoredKey ? "Scanned ✓ — tap Connect." : "Scanned ✓ — unlock a key, then Connect.",
+            "ok"
+          );
+          return;
+        }
+      } catch {
+        /* transient detect error — keep scanning */
+      }
+      _scanRAF = requestAnimationFrame(tick);
+    };
+    tick();
+  } catch (err) {
+    setStatus(ps, "Camera error: " + err.message, "err");
+    stopScan();
+  }
+}
+
+function stopScan() {
+  if (_scanRAF) {
+    cancelAnimationFrame(_scanRAF);
+    _scanRAF = null;
+  }
+  if (_scanStream) {
+    _scanStream.getTracks().forEach((t) => t.stop());
+    _scanStream = null;
+  }
+  $("scan-box").classList.add("hidden");
+}
+
 // --- Web Push: background approvals -----------------------------------------
 function urlBase64ToUint8Array(b64) {
   const pad = "=".repeat((4 - (b64.length % 4)) % 4);
@@ -295,6 +358,8 @@ $("btn-unlock").onclick = unlockKey;
 $("btn-forget").onclick = forgetKey;
 $("btn-pair").onclick = connect;
 $("btn-push").onclick = enablePush;
+$("btn-scan").onclick = startScan;
+$("btn-scan-stop").onclick = stopScan;
 
 // Allow opening with the URI pre-filled: /bunker/?uri=... or #capauth-bunker://
 const fromQuery = new URLSearchParams(location.search).get("uri");

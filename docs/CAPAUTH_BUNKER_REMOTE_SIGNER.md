@@ -204,10 +204,40 @@ cannot read the canonical payload or the signature.
    `capauth[service]`).
 7. ~~**Vendor OpenPGP.js**~~ — DONE (`phone-signer/vendor/openpgp.min.js`, v5.11.3),
    precached by the service worker.
+8. ~~**Camera QR scan**~~ — DONE — "📷 Scan QR" in the PWA uses `BarcodeDetector`
+   + `getUserMedia` to scan the pairing QR (falls back to paste where the API is
+   unavailable, e.g. desktop Linux Chrome / iOS Safari). Sovereign, no vendor.
+
+### Why NOT Authy / Google / Microsoft Authenticator
+
+Considered and declined for *identity*: those apps do **TOTP** (a symmetric
+secret the SERVER also stores — opposite of CapAuth's public-key model, and
+phishable) or **vendor passkeys** (asymmetric but the key is generated + cloud-
+escrowed by Google/Apple/MS, not your PGP key). Neither can hold/use an OpenPGP
+key. Sovereign "easy" = QR in our OWN app (scan + optional QR key import), not a
+vendor authenticator. A **passkey front-door to the CapAuth OIDC IdP** remains an
+optional *convenience tier* (clearly labeled non-sovereign) — see the v2 epic.
 
 ### Still open
 
-6. **Funnel deployment.** Wire `tailscale funnel` on the service host, set
-   `CAPAUTH_BUNKER_HOST` to the Funnel hostname, document the systemd unit.
+6. **Funnel deployment (runbook — deliberately not auto-applied).** The bunker
+   is already publicly reachable via the Cloudflare tunnel, so a Tailscale Funnel
+   is an *optional, more-sovereign* alternative transport (your tailnet vs a 3rd
+   party). To enable it on a node whose Funnel attribute is on:
+
+   ```bash
+   # Point Funnel at the cluster's capauth service (host-reachable port P, on a
+   # Funnel-allowed port: 443 / 8443 / 10000). Run ON the service host:
+   tailscale funnel --bg --https=443 --set-path=/bunker http://127.0.0.1:<P>/bunker
+   # then redeploy the service with the Funnel host so pairing URIs point there:
+   #   CAPAUTH_BUNKER_HOST=<node>.<tailnet>.ts.net
+   ```
+
+   **Caveat (why this is a runbook, not applied):** on the current host (.41,
+   `…tail204f0c.ts.net`) `tailscale serve` is ALREADY live for skchat/skcomms
+   (`/`, `/join`, `/livekit`, `/daemon`). Funnel + serve share a port's path
+   namespace, so adding bunker paths there must avoid colliding with those live
+   routes — do it on a dedicated port (8443/10000) or a node that isn't serving
+   skchat. Validate with `tailscale funnel status` before/after.
 8. **Pairing-secret hygiene.** One-time-use pairing secrets; rotate on each
    `paired`; bind the secret to a single signer socket.
