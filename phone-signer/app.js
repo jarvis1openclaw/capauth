@@ -13,7 +13,7 @@
  */
 
 import { encryptPrivateKey, decryptPrivateKey, isEncryptedEnvelope } from "./lib/keyvault.js";
-import { startSigner } from "./lib/bunker-signer.js";
+import { startSigner } from "./lib/bunker-signer.js?v=3";
 
 const openpgp = globalThis.openpgp;
 const STORE_KEY = "capauth_bunker_envelope";
@@ -252,7 +252,9 @@ if (fromQuery || fromHash) $("bunker-uri").value = fromQuery || fromHash;
 
 renderKeyState();
 
-// PWA service worker
+// PWA service worker. The ?v= bump changes the script URL so the browser drops
+// any previously-installed (cache-first) worker and installs the network-first
+// one — without this an old SW keeps serving stale cached code forever.
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  navigator.serviceWorker.register("sw.js?v=3").catch(() => {});
 }

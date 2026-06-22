@@ -1379,13 +1379,20 @@ async def bunker_ws(websocket: WebSocket) -> None:
         await _bunker.leave(session_id, role)
 
 
+# The PWA is iterated on live; an intermediary (Cloudflare) caches .js for hours
+# by default, which masks deployed fixes AND poisons an installed service worker.
+# Serve every PWA asset no-cache so the edge + browser always revalidate. (The
+# correctness-critical files — sw.js, app.js — must never be served stale.)
+_PWA_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+
 @app.get("/bunker/", response_class=HTMLResponse)
 @app.get("/bunker/signer", response_class=HTMLResponse)
 async def phone_signer_page() -> Any:
     """Serve the phone-signer PWA entry page (mobile-friendly)."""
     index = _PHONE_SIGNER_DIR / "index.html"
     if index.exists():
-        return FileResponse(str(index), media_type="text/html")
+        return FileResponse(str(index), media_type="text/html", headers=_PWA_NO_CACHE)
     raise HTTPException(status_code=404, detail="phone-signer PWA not bundled")
 
 
@@ -1402,4 +1409,4 @@ async def phone_signer_asset(asset: str) -> Any:
         raise HTTPException(status_code=403, detail="forbidden")
     if not target.is_file():
         raise HTTPException(status_code=404, detail="not found")
-    return FileResponse(str(target))
+    return FileResponse(str(target), headers=_PWA_NO_CACHE)
