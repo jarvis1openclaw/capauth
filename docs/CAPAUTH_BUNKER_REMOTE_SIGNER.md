@@ -225,26 +225,26 @@ key. Sovereign "easy" = QR in our OWN app (scan + optional QR key import), not a
 vendor authenticator. A **passkey front-door to the CapAuth OIDC IdP** remains an
 optional *convenience tier* (clearly labeled non-sovereign) — see the v2 epic.
 
+10. ~~**Tailscale Funnel transport**~~ — DONE (.41, 2026-06-22). A sovereign
+    public transport (your tailnet, not Cloudflare), live alongside the CF tunnel:
+
+    - **Bridge:** `capauth-idp` is a ClusterIP only, so a systemd *user* service
+      `capauth-bunker-bridge` runs `kubectl port-forward svc/capauth-idp
+      18420:8420` (Restart=always; linger on) to make it host-reachable.
+    - **Funnel:** `tailscale funnel --bg --https=10000 http://localhost:18420`
+      → `https://<node>.<tailnet>.ts.net:10000/`. Uses the **free** port 10000;
+      the live skchat `tailscale serve` (443/8443) is untouched.
+    - **Native dual-transport:** `CAPAUTH_BUNKER_HOSTS` allow-lists the CF host
+      **and** the funnel host, and `_broker_host(request)` echoes the request's
+      host when allow-listed — so the CF endpoint emits CF pairing URIs and the
+      funnel endpoint emits `wss://…ts.net:10000/bunker/ws` pairing URIs. Tailscale
+      preserves the Host header, so this works.
+    - **Verified:** full bunker E2E over the funnel — `paired`/`kex`/`enc`, broker
+      blind, signature GOOD. OIDC issuer stays the CF host (stable for clients).
+    - *Durability note:* `port-forward` reconnects on a pod roll (brief blip on
+      deploys); fine for a redundant transport.
+
 ### Still open
 
-6. **Funnel deployment (runbook — deliberately not auto-applied).** The bunker
-   is already publicly reachable via the Cloudflare tunnel, so a Tailscale Funnel
-   is an *optional, more-sovereign* alternative transport (your tailnet vs a 3rd
-   party). To enable it on a node whose Funnel attribute is on:
-
-   ```bash
-   # Point Funnel at the cluster's capauth service (host-reachable port P, on a
-   # Funnel-allowed port: 443 / 8443 / 10000). Run ON the service host:
-   tailscale funnel --bg --https=443 --set-path=/bunker http://127.0.0.1:<P>/bunker
-   # then redeploy the service with the Funnel host so pairing URIs point there:
-   #   CAPAUTH_BUNKER_HOST=<node>.<tailnet>.ts.net
-   ```
-
-   **Caveat (why this is a runbook, not applied):** on the current host (.41,
-   `…tail204f0c.ts.net`) `tailscale serve` is ALREADY live for skchat/skcomms
-   (`/`, `/join`, `/livekit`, `/daemon`). Funnel + serve share a port's path
-   namespace, so adding bunker paths there must avoid colliding with those live
-   routes — do it on a dedicated port (8443/10000) or a node that isn't serving
-   skchat. Validate with `tailscale funnel status` before/after.
 8. **Pairing-secret hygiene.** One-time-use pairing secrets; rotate on each
    `paired`; bind the secret to a single signer socket.
