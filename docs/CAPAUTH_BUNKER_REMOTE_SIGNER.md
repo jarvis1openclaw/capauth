@@ -207,6 +207,13 @@ cannot read the canonical payload or the signature.
 8. ~~**Camera QR scan**~~ — DONE — "📷 Scan QR" in the PWA uses `BarcodeDetector`
    + `getUserMedia` to scan the pairing QR (falls back to paste where the API is
    unavailable, e.g. desktop Linux Chrome / iOS Safari). Sovereign, no vendor.
+9. ~~**Device-to-device key import via QR**~~ — DONE — "📤 Send this key to another
+   device (QR)" PIN-encrypts the key (keyvault PBKDF2→AES-GCM) and shows an
+   animated QR (vendored qrcode-generator); the scanner reassembles the frames,
+   prompts for the PIN, decrypts, and fills the import box. No clipboard/cloud;
+   a photographed QR is useless without the PIN. Logic in `lib/keyqr.js`
+   (chunk/reassemble, tested). Verified in-browser: encrypt→chunk→reassemble→
+   decrypt round-trips and a wrong PIN is rejected.
 
 ### Why NOT Authy / Google / Microsoft Authenticator
 
