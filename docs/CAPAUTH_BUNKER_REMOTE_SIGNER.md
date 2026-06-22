@@ -183,26 +183,31 @@ cannot read the canonical payload or the signature.
   serves the PWA, an actively-malicious broker is already game-over, so
   relay-layer MITM resistance has limited marginal value while it ships the code.
 
-## Hardening follow-ups (NOT done)
+## Hardening — status
 
-1. **Active-MITM resistance vs the broker itself.** Carry a client-generated key
-   fragment only in the QR (never to the broker) and mix it into the HKDF, so the
-   broker cannot derive the channel key even by substituting `kex` pubkeys.
-2. **Replay / nonce protection on the bunker protocol.** Bind each
-   `sign_request` to a broker-issued challenge + monotonic counter; reject
-   duplicate `id`s. Today only the CapAuth nonce TTL guards replay.
-3. **Broker auth + rate-limit.** Add per-IP/session rate limiting and optional
-   bearer auth on `/bunker/session`; cap concurrent sessions; shorten TTL.
-4. **Phone re-derivation cross-check.** Have the phone *rebuild* the
-   `CAPAUTH_NONCE_V2` from structured fields and refuse to sign if the rebuilt
-   bytes differ from the relayed `payload` (defends against a malicious desktop
-   smuggling non-canonical bytes). Helper already present in
-   `phone-signer/lib/canonical.js` (`rebuildCanonicalV2`).
-5. **Push notifications.** Web Push so the phone surfaces an approval prompt when
-   the PWA is backgrounded (today it must be open + connected).
+1. ~~**Active-MITM resistance vs the broker.**~~ DONE — an optional client-only
+   `frag` (QR `&f=`, never sent to the broker) is mixed into the HKDF info, so
+   the broker can't derive the channel key even by substituting `kex` pubkeys.
+2. ~~**Replay protection.**~~ DONE — the broker rejects a duplicate client
+   request `id` per session (`duplicate_request`). (A broker-issued monotonic
+   challenge is a further optional step.)
+3. ~~**Broker auth + rate-limit.**~~ DONE — per-IP sliding-window rate limit +
+   global session cap (`BunkerCapacityError` → 503) + optional bearer auth
+   (`CAPAUTH_BUNKER_AUTH_TOKEN`) on `/bunker/session` and `/bunker/notify`.
+4. ~~**Phone re-derivation cross-check.**~~ DONE — the phone rebuilds the
+   `CAPAUTH_NONCE_V2` from parsed fields and rejects (`non_canonical_payload`)
+   if it differs from the relayed bytes.
+5. ~~**Push notifications.**~~ DONE — Web Push (VAPID): `push.py` +
+   `/bunker/{vapid,subscribe,notify}`, SW `push`/`notificationclick` handlers,
+   a phone "Enable background approvals" button, and a best-effort
+   `_wakePhone()` from the desktop client. Requires `pywebpush` (in
+   `capauth[service]`).
+7. ~~**Vendor OpenPGP.js**~~ — DONE (`phone-signer/vendor/openpgp.min.js`, v5.11.3),
+   precached by the service worker.
+
+### Still open
+
 6. **Funnel deployment.** Wire `tailscale funnel` on the service host, set
    `CAPAUTH_BUNKER_HOST` to the Funnel hostname, document the systemd unit.
-7. ~~**Vendor OpenPGP.js**~~ — DONE (`phone-signer/vendor/openpgp.min.js`, v5.11.3)
-   and add it to the service-worker precache.
 8. **Pairing-secret hygiene.** One-time-use pairing secrets; rotate on each
    `paired`; bind the secret to a single signer socket.

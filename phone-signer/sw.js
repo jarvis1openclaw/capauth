@@ -30,6 +30,43 @@ self.addEventListener("activate", (e) => {
   );
 });
 
+// --- Web Push: wake the phone for a sign-in approval when backgrounded ------
+self.addEventListener("push", (e) => {
+  let data = {};
+  try {
+    data = e.data ? e.data.json() : {};
+  } catch {
+    data = { body: e.data ? e.data.text() : "" };
+  }
+  const title = data.title || "CapAuth sign-in request";
+  const options = {
+    body: data.body || "Tap to review and approve a sign-in.",
+    icon: "./icons/icon-192.png",
+    badge: "./icons/icon-192.png",
+    tag: "capauth-bunker-approval",
+    requireInteraction: true,
+    data: { url: data.url || "./" },
+  };
+  e.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const target = (e.notification.data && e.notification.data.url) || "./";
+  // Open the PWA pre-filled with the pairing URI (./?uri=capauth-bunker://…).
+  const open = target.startsWith("capauth-bunker:")
+    ? "./?uri=" + encodeURIComponent(target)
+    : target;
+  e.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {
+      for (const c of cs) {
+        if ("focus" in c) return c.focus();
+      }
+      return self.clients.openWindow(open);
+    })
+  );
+});
+
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   // Never intercept the relay WebSocket or cross-origin CDN requests.

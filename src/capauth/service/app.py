@@ -37,6 +37,7 @@ from ..authentik.stage import build_challenge, verify_auth_response
 from ..authentik.verifier import fingerprint_from_armor
 from .. import integration as _integration
 from .bunker import BunkerBroker, BunkerCapacityError, build_pairing_uri
+from .push import PushRegistry
 from .keystore import KeyStore
 from .oidc import build_oidc_router
 from .oidc.provider import discovery_document as _oidc_discovery_document
@@ -1260,6 +1261,7 @@ async def qr_verify_endpoint(nonce_id: str, req: VerifyRequest) -> dict[str, Any
 _bunker = BunkerBroker(
     max_sessions=int(os.environ.get("CAPAUTH_BUNKER_MAX_SESSIONS", "500"))
 )
+_push = PushRegistry(data_dir=os.environ.get("CAPAUTH_DATA_DIR", "/data"))
 
 # Simple in-memory sliding-window rate limiter for POST /bunker/session, keyed by
 # client IP. Defaults: 10 new sessions / 60s / IP. Tune via env. This is a DoS
@@ -1424,6 +1426,55 @@ async def bunker_ws(websocket: WebSocket) -> None:
 # Serve every PWA asset no-cache so the edge + browser always revalidate. (The
 # correctness-critical files — sw.js, app.js — must never be served stale.)
 _PWA_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+
+# --- Web Push (background approval prompts) --------------------------------
+# Registered BEFORE the /bunker/{asset:path} catch-all so these aren't captured
+# as static assets.
+
+
+class PushSubscribeRequest(BaseModel):
+    fingerprint: str
+    subscription: dict
+
+
+class PushNotifyRequest(BaseModel):
+    fingerprint: str
+    url: str = ""
+    title: str = "CapAuth sign-in request"
+    body: str = "Tap to review and approve a sign-in on your phone."
+
+
+@app.get("/bunker/vapid")
+async def bunker_vapid() -> dict[str, str]:
+    """Return the VAPID application-server key for pushManager.subscribe."""
+    return {"publicKey": _push.application_server_key()}
+
+
+@app.post("/bunker/subscribe")
+async def bunker_subscribe(req: PushSubscribeRequest) -> dict[str, Any]:
+    """Register a phone's Web Push subscription under its PGP fingerprint."""
+    try:
+        _push.subscribe(req.fingerprint, req.subscription)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "subscriptions": _push.subscription_count(req.fingerprint)}
+
+
+@app.post("/bunker/notify")
+async def bunker_notify(req: PushNotifyRequest, request: Request) -> dict[str, Any]:
+    """Push a sign-in approval prompt to a fingerprint's subscribed phone(s).
+
+    Same auth + rate-limit posture as session creation (push can be abused to
+    spam). The desktop pairing flow calls this so a backgrounded phone wakes.
+    """
+    if not _bunker_auth_ok(request):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    client_ip = request.client.host if request.client else "unknown"
+    if not _bunker_rate_ok(client_ip):
+        raise HTTPException(status_code=429, detail="rate limited; try again shortly")
+    payload = {"title": req.title, "body": req.body, "url": req.url}
+    return _push.notify(req.fingerprint, payload)
 
 
 @app.get("/bunker/", response_class=HTMLResponse)

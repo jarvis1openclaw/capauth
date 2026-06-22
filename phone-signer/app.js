@@ -248,11 +248,53 @@ function showApproval(req) {
   });
 }
 
+// --- Web Push: background approvals -----------------------------------------
+function urlBase64ToUint8Array(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const base = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function enablePush() {
+  const fp = localStorage.getItem(FP_KEY);
+  const st = $("push-status");
+  if (!fp) return setStatus(st, "Load a key first.", "err");
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    return setStatus(st, "Push isn't supported on this browser.", "err");
+  }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") return setStatus(st, "Notifications were denied.", "err");
+    const reg = await navigator.serviceWorker.ready;
+    const { publicKey } = await (await fetch("vapid")).json();
+    if (!publicKey) throw new Error("server has no VAPID key");
+    const sub =
+      (await reg.pushManager.getSubscription()) ||
+      (await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      }));
+    const res = await fetch("subscribe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ fingerprint: fp, subscription: sub.toJSON() }),
+    });
+    if (!res.ok) throw new Error("server rejected subscription (" + res.status + ")");
+    setStatus(st, "🔔 Background approvals enabled for " + fp.slice(0, 8) + "…", "ok");
+  } catch (err) {
+    setStatus(st, "Push setup failed: " + err.message, "err");
+  }
+}
+
 // --- wire up ----------------------------------------------------------------
 $("btn-store").onclick = storeKey;
 $("btn-unlock").onclick = unlockKey;
 $("btn-forget").onclick = forgetKey;
 $("btn-pair").onclick = connect;
+$("btn-push").onclick = enablePush;
 
 // Allow opening with the URI pre-filled: /bunker/?uri=... or #capauth-bunker://
 const fromQuery = new URLSearchParams(location.search).get("uri");

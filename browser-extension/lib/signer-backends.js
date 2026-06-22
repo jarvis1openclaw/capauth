@@ -366,6 +366,11 @@ export class RemoteBunkerBackend {
       version: "CAPAUTH_NONCE_V2",
     };
 
+    // Best-effort: wake a backgrounded/closed phone via Web Push so the user
+    // gets an approval prompt without manually re-opening the PWA. Fire-and-
+    // forget — never block or fail the sign on a push hiccup.
+    this._wakePhone();
+
     const res = await this.relayRoundTrip(request);
     if (!res) throw new Error("Phone returned no response.");
     if (res.type === "reject") {
@@ -393,6 +398,33 @@ export class RemoteBunkerBackend {
    * @param {Object} request - the sign_request envelope.
    * @returns {Promise<Object>} the response envelope.
    */
+  /** Broker HTTPS base derived from the wss relay URL. */
+  _brokerHttpBase() {
+    return this.relayWsUrl.replace(/^ws/, "http").replace(/\/bunker\/ws$/, "");
+  }
+
+  /** Reconstruct the capauth-bunker:// pairing URI (carries the QR frag). */
+  _pairingUri() {
+    const host = this.relayWsUrl.replace(/^wss?:\/\//, "").replace(/\/bunker\/ws$/, "");
+    const qs = new URLSearchParams({ key: this.pairingSecret, relay: this.relayWsUrl });
+    if (this.frag) qs.set("f", this.frag);
+    return `capauth-bunker://${host}/${encodeURIComponent(this.sessionId)}?${qs.toString()}`;
+  }
+
+  /** Best-effort Web Push to wake the phone (no-op if no fingerprint). */
+  async _wakePhone() {
+    if (!this.fingerprint) return;
+    try {
+      await fetch(this._brokerHttpBase() + "/bunker/notify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fingerprint: this.fingerprint, url: this._pairingUri() }),
+      });
+    } catch {
+      /* best-effort; the WS path is the source of truth */
+    }
+  }
+
   _defaultRelay(request) {
     return new Promise((resolve, reject) => {
       let settled = false;

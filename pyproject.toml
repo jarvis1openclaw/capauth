@@ -48,6 +48,7 @@ service = [
     "python-gnupg>=0.5",
     "httpx>=0.25",
     "segno>=1.6",
+    "pywebpush>=1.14",
 ]
 dev = [
     "pytest>=7.0",
