@@ -1,0 +1,11 @@
+[
+  {
+    "client_id": "authentik",
+    "client_secret": "CHANGE-ME-to-a-long-random-secret",
+    "redirect_uris": [
+      "https://authentik.example.com/source/oauth/callback/capauth/"
+    ],
+    "name": "Authentik",
+    "scopes": ["openid", "profile", "email", "groups"]
+  }
+]
