@@ -8,11 +8,22 @@ import { describe, it, expect } from "vitest";
 // Canonical payload helpers (shared with background.js and server)
 // ---------------------------------------------------------------------------
 
-function buildCanonicalNoncePayload({ nonce, clientNonce, timestamp, service, expires }) {
+function buildCanonicalNoncePayload({ nonce, clientNonce, origin, timestamp, service, expires }) {
+  if (origin === undefined || origin === null || origin === "") {
+    return [
+      "CAPAUTH_NONCE_V1",
+      `nonce=${nonce}`,
+      `client_nonce=${clientNonce}`,
+      `timestamp=${timestamp}`,
+      `service=${service}`,
+      `expires=${expires}`,
+    ].join("\n");
+  }
   return [
-    "CAPAUTH_NONCE_V1",
+    "CAPAUTH_NONCE_V2",
     `nonce=${nonce}`,
     `client_nonce=${clientNonce}`,
+    `origin=${origin}`,
     `timestamp=${timestamp}`,
     `service=${service}`,
     `expires=${expires}`,
@@ -89,12 +100,28 @@ describe("buildCanonicalNoncePayload (stage)", () => {
     expires: "2026-02-27T12:01:00Z",
   };
 
-  it("produces the correct multi-line format", () => {
+  it("produces the correct V1 multi-line format (origin absent)", () => {
     const result = buildCanonicalNoncePayload(params);
     expect(result).toBe(
       "CAPAUTH_NONCE_V1\n" +
       "nonce=test-nonce-uuid\n" +
       "client_nonce=abc==\n" +
+      "timestamp=2026-02-27T12:00:00Z\n" +
+      "service=nextcloud.skworld.io\n" +
+      "expires=2026-02-27T12:01:00Z"
+    );
+  });
+
+  it("produces the correct V2 format with origin", () => {
+    const result = buildCanonicalNoncePayload({
+      ...params,
+      origin: "https://nextcloud.skworld.io",
+    });
+    expect(result).toBe(
+      "CAPAUTH_NONCE_V2\n" +
+      "nonce=test-nonce-uuid\n" +
+      "client_nonce=abc==\n" +
+      "origin=https://nextcloud.skworld.io\n" +
       "timestamp=2026-02-27T12:00:00Z\n" +
       "service=nextcloud.skworld.io\n" +
       "expires=2026-02-27T12:01:00Z"

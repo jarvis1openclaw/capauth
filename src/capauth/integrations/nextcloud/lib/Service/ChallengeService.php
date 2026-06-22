@@ -60,10 +60,17 @@ class ChallengeService {
     /**
      * Issue a new challenge for the given fingerprint.
      *
+     * Origin-binding (Tier A): the server ASSERTS its own canonical RP origin
+     * into the issued record so the client signs over it (CAPAUTH_NONCE_V2) and
+     * the verifier can confirm it matches the configured allowed origin on
+     * return. When $origin is '' the legacy V1 (origin-less) payload is used so
+     * existing clients keep working during the dual-accept migration window.
+     *
      * @return array{nonce:string, client_nonce_echo:string, issued_at:string,
-     *               expires_at:string, service:string, fingerprint:string}
+     *               expires_at:string, service:string, origin:string,
+     *               fingerprint:string, used:bool}
      */
-    public function issue(string $fingerprint, string $service, string $clientNonce = ''): array {
+    public function issue(string $fingerprint, string $service, string $clientNonce = '', string $origin = ''): array {
         $fp        = strtoupper(trim($fingerprint));
         $nonce     = $this->generateUuidV4();
         $issuedAt  = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DateTimeInterface::ATOM);
@@ -77,6 +84,7 @@ class ChallengeService {
             'issued_at'         => $issuedAt,
             'expires_at'        => $expiresAt,
             'service'           => $service,
+            'origin'            => $origin,
             'fingerprint'       => $fp,
             'used'              => false,
         ];
@@ -130,6 +138,12 @@ class ChallengeService {
 
     /**
      * Builds the deterministic plaintext that the client signs for nonce auth.
+     *
+     * When $origin is a non-empty string the V2 (origin-bound) payload is
+     * produced with the origin line between client_nonce and timestamp; when
+     * $origin is null the legacy V1 payload is produced (dual-accept migration).
+     * The byte layout MUST match the Python, JS and stage implementations — a
+     * shared cross-impl test vector asserts this.
      */
     public function canonicalNoncePayload(
         string $nonce,
@@ -137,11 +151,23 @@ class ChallengeService {
         string $issuedAt,
         string $service,
         string $expiresAt,
+        ?string $origin = null,
     ): string {
+        if ($origin === null) {
+            return implode("\n", [
+                'CAPAUTH_NONCE_V1',
+                "nonce={$nonce}",
+                "client_nonce={$clientNonce}",
+                "timestamp={$issuedAt}",
+                "service={$service}",
+                "expires={$expiresAt}",
+            ]);
+        }
         return implode("\n", [
-            'CAPAUTH_NONCE_V1',
+            'CAPAUTH_NONCE_V2',
             "nonce={$nonce}",
             "client_nonce={$clientNonce}",
+            "origin={$origin}",
             "timestamp={$issuedAt}",
             "service={$service}",
             "expires={$expiresAt}",

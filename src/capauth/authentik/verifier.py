@@ -26,8 +26,20 @@ def canonical_nonce_payload(
     timestamp: str,
     service: str,
     expires: str,
+    origin: Optional[str] = None,
 ) -> bytes:
     """Build the deterministic string that both server and client sign/verify.
+
+    When ``origin`` is provided, the V2 canonical payload is emitted with the
+    ``origin`` line inserted between ``client_nonce`` and ``timestamp`` (the
+    origin-binding format, ``CAPAUTH_NONCE_V2``). When ``origin`` is ``None`` the
+    legacy ``CAPAUTH_NONCE_V1`` payload (no origin) is emitted for backward
+    compatibility during the dual-accept migration window.
+
+    The byte layout MUST be kept identical across all five implementations
+    (Python verifier, the two Nextcloud PHP services, the Nextcloud login JS,
+    the browser-extension/stage signers). A shared cross-impl test vector
+    asserts this.
 
     Args:
         nonce: UUID v4 nonce string.
@@ -35,18 +47,31 @@ def canonical_nonce_payload(
         timestamp: ISO 8601 UTC timestamp.
         service: Service identifier (hostname).
         expires: ISO 8601 UTC expiry timestamp.
+        origin: RP origin (``scheme://host[:port]``). When set, emits V2;
+            when ``None``, emits the legacy V1 payload.
 
     Returns:
         bytes: UTF-8 encoded canonical payload.
     """
-    lines = [
-        "CAPAUTH_NONCE_V1",
-        f"nonce={nonce}",
-        f"client_nonce={client_nonce_echo}",
-        f"timestamp={timestamp}",
-        f"service={service}",
-        f"expires={expires}",
-    ]
+    if origin is None:
+        lines = [
+            "CAPAUTH_NONCE_V1",
+            f"nonce={nonce}",
+            f"client_nonce={client_nonce_echo}",
+            f"timestamp={timestamp}",
+            f"service={service}",
+            f"expires={expires}",
+        ]
+    else:
+        lines = [
+            "CAPAUTH_NONCE_V2",
+            f"nonce={nonce}",
+            f"client_nonce={client_nonce_echo}",
+            f"origin={origin}",
+            f"timestamp={timestamp}",
+            f"service={service}",
+            f"expires={expires}",
+        ]
     return "\n".join(lines).encode("utf-8")
 
 
@@ -76,6 +101,93 @@ def canonical_claims_payload(
         f"claims={claims_compact}",
     ]
     return "\n".join(lines).encode("utf-8")
+
+
+def payload_version(payload: bytes) -> Optional[str]:
+    """Return the canonical payload version from its first line.
+
+    Dispatches V1 vs V2 acceptance on the self-describing header. Returns
+    ``"V1"``, ``"V2"`` or ``None`` if the header is not recognised.
+
+    Args:
+        payload: Canonical nonce payload bytes.
+
+    Returns:
+        Optional[str]: ``"V1"``, ``"V2"``, or ``None``.
+    """
+    try:
+        first_line = payload.split(b"\n", 1)[0].decode("utf-8", "replace").strip()
+    except Exception:
+        return None
+    if first_line == "CAPAUTH_NONCE_V1":
+        return "V1"
+    if first_line == "CAPAUTH_NONCE_V2":
+        return "V2"
+    return None
+
+
+def check_origin(
+    issued_origin: Optional[str],
+    allowed_origins,
+    require_origin_binding: bool = False,
+) -> tuple[bool, str]:
+    """Tier-A origin assertion check.
+
+    Verifies that the origin bound into the (already signature-validated)
+    canonical payload matches one of the RP's configured allowed origins.
+
+    Migration semantics:
+      * ``issued_origin is None`` (a V1 payload, no origin): accepted while
+        ``require_origin_binding`` is False; rejected (``v1_rejected``) when True.
+      * ``issued_origin`` present (V2): MUST match an allowed origin, else
+        ``invalid_origin``.
+
+    Args:
+        issued_origin: The ``origin`` value carried in the signed payload, or
+            ``None`` for a legacy V1 payload.
+        allowed_origins: A single origin string or an iterable of allowed
+            origin strings (the RP's configured ``allowed_origins``).
+        require_origin_binding: When True, V1 (origin-less) payloads are
+            rejected — the post-migration enforced mode.
+
+    Returns:
+        tuple[bool, str]: ``(ok, error_code)``. ``error_code`` is ``""`` on
+        success, ``"v1_rejected"`` or ``"invalid_origin"`` on failure.
+    """
+    if isinstance(allowed_origins, str):
+        allowed = [allowed_origins]
+    else:
+        allowed = list(allowed_origins or [])
+    allowed_norm = {_normalize_origin(o) for o in allowed if o}
+
+    if issued_origin is None:
+        if require_origin_binding:
+            return False, "v1_rejected"
+        return True, ""
+
+    if _normalize_origin(issued_origin) in allowed_norm:
+        return True, ""
+    return False, "invalid_origin"
+
+
+def _normalize_origin(origin: str) -> str:
+    """Normalise an origin for comparison (strip trailing slash, lowercase host).
+
+    Keeps the comparison robust to a trailing slash or scheme/host casing while
+    preserving the port. Does NOT alter the bytes that are signed — this is only
+    used for the equality check.
+
+    Args:
+        origin: An origin string (``scheme://host[:port]``).
+
+    Returns:
+        str: Normalised origin.
+    """
+    o = (origin or "").strip().rstrip("/")
+    if "://" in o:
+        scheme, rest = o.split("://", 1)
+        return f"{scheme.lower()}://{rest.lower()}"
+    return o.lower()
 
 
 def _is_detach_sig(signature_armor: str) -> bool:

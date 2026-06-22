@@ -109,9 +109,15 @@ class CapAuthClient {
    * @returns {Promise<string>} ASCII-armored PGP detached signature.
    */
   async signNonce(challenge, privateKeyArmored, passphrase = "") {
+    // Origin-binding (Tier A): if the server asserted an `origin` in the
+    // challenge, sign the V2 origin-bound payload; otherwise sign legacy V1
+    // (dual-accept migration). TIER B (the real phishing fix, out of scope
+    // here): override with `window.location.origin` of the page actually being
+    // authenticated so the server rejects a relayed/proxied origin.
     const canonicalPayload = buildCanonicalNoncePayload({
       nonce: challenge.nonce,
       clientNonce: challenge.client_nonce_echo,
+      origin: challenge.origin,
       timestamp: challenge.timestamp,
       service: challenge.service,
       expires: challenge.expires,

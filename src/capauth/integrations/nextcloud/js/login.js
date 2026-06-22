@@ -86,10 +86,29 @@
     }
 
     function buildCanonicalPayload(fp, ch) {
+        // Origin-binding (Tier A): when the server includes an `origin` in the
+        // issued challenge, build the V2 origin-bound payload (origin line
+        // between client_nonce and timestamp); otherwise fall back to the
+        // legacy V1 payload during the dual-accept migration window. The byte
+        // layout MUST match the Python/PHP/stage implementations.
+        // NB: the challenge record exposes issued_at as `timestamp` and
+        // expires_at as `expires`; the origin field is `origin`.
+        const origin = ch.origin;
+        if (origin === undefined || origin === null || origin === '') {
+            return [
+                'CAPAUTH_NONCE_V1',
+                `nonce=${ch.nonce}`,
+                `client_nonce=${ch.client_nonce_echo}`,
+                `timestamp=${ch.timestamp}`,
+                `service=${ch.service}`,
+                `expires=${ch.expires}`,
+            ].join('\n');
+        }
         return [
-            'CAPAUTH_NONCE_V1',
+            'CAPAUTH_NONCE_V2',
             `nonce=${ch.nonce}`,
             `client_nonce=${ch.client_nonce_echo}`,
+            `origin=${origin}`,
             `timestamp=${ch.timestamp}`,
             `service=${ch.service}`,
             `expires=${ch.expires}`,

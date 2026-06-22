@@ -26,19 +26,38 @@ export function generateNonce(byteLength = 16) {
  * Must match the server-side `canonical_nonce_payload()` in
  * capauth/src/capauth/authentik/verifier.py exactly.
  *
+ * Origin-binding (Tier A/B): when `origin` is provided the V2 origin-bound
+ * payload is built (origin line between client_nonce and timestamp); otherwise
+ * the legacy V1 payload is built for the dual-accept migration window. For the
+ * Tier-B (real phishing-resistant) flow the extension MUST set `origin` from
+ * `window.location.origin` of the page it is actually on.
+ *
  * @param {Object} params
  * @param {string} params.nonce - Server-issued nonce UUID.
  * @param {string} params.clientNonce - Base64 client nonce echo.
+ * @param {string} [params.origin] - RP origin (scheme://host[:port]). When set,
+ *   emits V2; when omitted/empty, emits legacy V1.
  * @param {string} params.timestamp - ISO 8601 UTC timestamp.
  * @param {string} params.service - Service identifier.
  * @param {string} params.expires - ISO 8601 UTC expiry.
  * @returns {string} Canonical payload string.
  */
-export function buildCanonicalNoncePayload({ nonce, clientNonce, timestamp, service, expires }) {
+export function buildCanonicalNoncePayload({ nonce, clientNonce, origin, timestamp, service, expires }) {
+  if (origin === undefined || origin === null || origin === "") {
+    return [
+      "CAPAUTH_NONCE_V1",
+      `nonce=${nonce}`,
+      `client_nonce=${clientNonce}`,
+      `timestamp=${timestamp}`,
+      `service=${service}`,
+      `expires=${expires}`,
+    ].join("\n");
+  }
   return [
-    "CAPAUTH_NONCE_V1",
+    "CAPAUTH_NONCE_V2",
     `nonce=${nonce}`,
     `client_nonce=${clientNonce}`,
+    `origin=${origin}`,
     `timestamp=${timestamp}`,
     `service=${service}`,
     `expires=${expires}`,

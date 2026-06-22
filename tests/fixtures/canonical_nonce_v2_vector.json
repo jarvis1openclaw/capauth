@@ -1,0 +1,13 @@
+{
+  "_comment": "Shared cross-impl test vector for the CAPAUTH_NONCE canonical payload. Python, PHP, and JS tests all read THIS file and assert their canonicalNoncePayload() produces byte-identical output. This is the single source of truth that prevents PHP-vs-Python (and JS) drift. Do not edit the expected_* fields without regenerating every impl's output.",
+  "fields": {
+    "nonce": "11111111-2222-4333-8444-555555555555",
+    "client_nonce": "Y2xpZW50LW5vbmNlLWZpeGVk",
+    "origin": "https://cloud.example.org",
+    "timestamp": "2026-06-22T12:00:00+00:00",
+    "service": "cloud.example.org",
+    "expires": "2026-06-22T12:02:00+00:00"
+  },
+  "expected_v2": "CAPAUTH_NONCE_V2\nnonce=11111111-2222-4333-8444-555555555555\nclient_nonce=Y2xpZW50LW5vbmNlLWZpeGVk\norigin=https://cloud.example.org\ntimestamp=2026-06-22T12:00:00+00:00\nservice=cloud.example.org\nexpires=2026-06-22T12:02:00+00:00",
+  "expected_v1": "CAPAUTH_NONCE_V1\nnonce=11111111-2222-4333-8444-555555555555\nclient_nonce=Y2xpZW50LW5vbmNlLWZpeGVk\ntimestamp=2026-06-22T12:00:00+00:00\nservice=cloud.example.org\nexpires=2026-06-22T12:02:00+00:00"
+}

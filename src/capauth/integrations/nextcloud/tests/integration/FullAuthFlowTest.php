@@ -7,6 +7,7 @@ namespace OCA\CapAuth\Tests\Integration;
 use OCA\CapAuth\Service\ChallengeService;
 use OCA\CapAuth\Service\VerifierService;
 use OCP\ICache;
+use OCP\ICacheFactory;
 use OCP\IConfig;
 use OCP\ILogger;
 use PHPUnit\Framework\TestCase;
@@ -46,7 +47,12 @@ class FullAuthFlowTest extends TestCase {
 
         $logger = $this->createMock(ILogger::class);
 
-        $this->challengeService = new ChallengeService($config, $cache);
+        $cacheFactory = $this->createMock(ICacheFactory::class);
+        $cacheFactory->method('isAvailable')->willReturn(true);
+        $cacheFactory->method('createDistributed')->willReturn($cache);
+        $cacheFactory->method('createLocal')->willReturn($cache);
+
+        $this->challengeService = new ChallengeService($config, $cacheFactory);
         $this->verifierService  = new VerifierService($logger);
     }
 
@@ -165,6 +171,68 @@ class FullAuthFlowTest extends TestCase {
         );
         $this->assertFalse($ok);
         $this->assertSame('invalid_claims_signature', $err);
+    }
+
+    // ── Origin-binding (Tier A) end-to-end ────────────────────────────────────
+
+    public function testV2IssueCanonicalRoundtripWithOrigin(): void {
+        $fp = '1234567890ABCDEF1234567890ABCDEF12345678';
+        $origin = 'https://cloud.example.org';
+        $ch = $this->challengeService->issue($fp, 'cloud.example.org', 'cn==', $origin);
+
+        $this->assertSame($origin, $ch['origin']);
+
+        // Issuer-built V2 payload == verifier-rebuilt V2 payload (no drift).
+        $issuerPayload = $this->challengeService->canonicalNoncePayload(
+            $ch['nonce'], $ch['client_nonce_echo'], $ch['issued_at'],
+            $ch['service'], $ch['expires_at'], $ch['origin'],
+        );
+        $verifierPayload = $this->verifierService->canonicalNoncePayload(
+            $ch['nonce'], $ch['client_nonce_echo'], $ch['issued_at'],
+            $ch['service'], $ch['expires_at'], $ch['origin'],
+        );
+        $this->assertSame($issuerPayload, $verifierPayload);
+        $this->assertStringStartsWith('CAPAUTH_NONCE_V2', $issuerPayload);
+    }
+
+    public function testV2VerifyAcceptsMatchingOriginRejectsPhishing(): void {
+        $verifier = $this->getMockBuilder(VerifierService::class)
+            ->setConstructorArgs([$this->createMock(ILogger::class)])
+            ->onlyMethods(['verifySignature'])
+            ->getMock();
+        $verifier->method('verifySignature')->willReturn(true);
+
+        $fp = '1234567890ABCDEF1234567890ABCDEF12345678';
+        $ch = $this->challengeService->issue($fp, 'cloud.example.org', 'cn==', 'https://cloud.example.org');
+        $ctx = [
+            'nonce'             => $ch['nonce'],
+            'client_nonce_echo' => $ch['client_nonce_echo'],
+            'issued_at'         => $ch['issued_at'],
+            'service'           => $ch['service'],
+            'expires_at'        => $ch['expires_at'],
+            'origin'            => $ch['origin'],
+        ];
+
+        // RP origin matches → accepted (even with binding enforced).
+        [$ok, $err] = $verifier->verifyAuthResponse(
+            fingerprint: $fp, nonceId: $ch['nonce'], nonceSigArmor: 'sig',
+            claims: [], claimsSigArmor: '', publicKeyArmor: 'key',
+            challengeCtx: $ctx,
+            allowedOrigins: ['https://cloud.example.org'],
+            requireOriginBinding: true,
+        );
+        $this->assertTrue($ok, "Matching origin should pass: {$err}");
+
+        // Different RP (phishing relay) → rejected on origin.
+        [$ok2, $err2] = $verifier->verifyAuthResponse(
+            fingerprint: $fp, nonceId: $ch['nonce'], nonceSigArmor: 'sig',
+            claims: [], claimsSigArmor: '', publicKeyArmor: 'key',
+            challengeCtx: $ctx,
+            allowedOrigins: ['https://realserver.example'],
+            requireOriginBinding: true,
+        );
+        $this->assertFalse($ok2);
+        $this->assertSame('invalid_origin', $err2);
     }
 
     // ── QR / peek flow ───────────────────────────────────────────────────────

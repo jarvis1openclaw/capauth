@@ -52,7 +52,10 @@ if (!interface_exists('OCP\ICache')) {
     interface_exists('OCP\ICache') || eval('namespace OCP; interface ICache { public function get(string $key); public function set(string $key, $value, int $ttl = 0): bool; public function remove(string $key): bool; }');
 }
 if (!interface_exists('OCP\IConfig')) {
-    eval('namespace OCP; interface IConfig { public function getAppValue(string $appId, string $key, string $default = ""): string; public function setAppValue(string $appId, string $key, string $value): void; }');
+    eval('namespace OCP; interface IConfig { public function getAppValue(string $appId, string $key, string $default = ""): string; public function setAppValue(string $appId, string $key, string $value): void; public function getSystemValue(string $key, $default = ""); }');
+}
+if (!interface_exists('OCP\ICacheFactory')) {
+    eval('namespace OCP; interface ICacheFactory { public function isAvailable(): bool; public function createDistributed(string $prefix = ""): \OCP\ICache; public function createLocal(string $prefix = ""): \OCP\ICache; }');
 }
 if (!interface_exists('OCP\ISession')) {
     eval('namespace OCP; interface ISession { public function get(string $key); public function set(string $key, $value): void; public function remove(string $key): void; }');
@@ -154,7 +157,7 @@ if (!class_exists('OCP\\AppFramework\\Controller')) {
     eval('namespace OCP\AppFramework; abstract class Controller { public function __construct(string $appName, \OCP\IRequest $request) {} }');
 }
 if (!interface_exists('OCP\\IRequest')) {
-    eval('namespace OCP; interface IRequest { public function getParam(string $key, $default = null); }');
+    eval('namespace OCP; interface IRequest { public function getParam(string $key, $default = null); public function getServerHost(): string; public function getServerProtocol(): string; }');
 }
 if (!class_exists('OCP\\AppFramework\\Http\\JSONResponse')) {
     eval('

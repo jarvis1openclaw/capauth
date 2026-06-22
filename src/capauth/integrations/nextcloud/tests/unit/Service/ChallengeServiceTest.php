@@ -6,6 +6,7 @@ namespace OCA\CapAuth\Tests\Unit\Service;
 
 use OCA\CapAuth\Service\ChallengeService;
 use OCP\ICache;
+use OCP\ICacheFactory;
 use OCP\IConfig;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -13,7 +14,10 @@ use PHPUnit\Framework\TestCase;
 /**
  * Unit tests for ChallengeService.
  *
- * We mock IConfig and ICache so no Nextcloud infrastructure is required.
+ * We mock IConfig and ICacheFactory so no Nextcloud infrastructure is required.
+ * The service builds its cache via ICacheFactory (it runs pre-login, so it must
+ * NOT use the user-scoped ICache directly), so the factory hands back an
+ * in-memory-backed ICache mock.
  */
 class ChallengeServiceTest extends TestCase {
     private ChallengeService $service;
@@ -28,6 +32,7 @@ class ChallengeServiceTest extends TestCase {
     protected function setUp(): void {
         $this->config = $this->createMock(IConfig::class);
         $this->cache  = $this->createMock(ICache::class);
+        $cacheFactory = $this->createMock(ICacheFactory::class);
 
         // Config stubs.
         $this->config->method('getAppValue')->willReturnCallback(
@@ -47,7 +52,12 @@ class ChallengeServiceTest extends TestCase {
             fn($key) => $this->cacheStore[$key] ?? null
         );
 
-        $this->service = new ChallengeService($this->config, $this->cache);
+        // Factory hands back the in-memory cache.
+        $cacheFactory->method('isAvailable')->willReturn(true);
+        $cacheFactory->method('createDistributed')->willReturn($this->cache);
+        $cacheFactory->method('createLocal')->willReturn($this->cache);
+
+        $this->service = new ChallengeService($this->config, $cacheFactory);
     }
 
     // ── issue() ─────────────────────────────────────────────────────────────
@@ -79,6 +89,19 @@ class ChallengeServiceTest extends TestCase {
         $fp = strtolower('1234567890abcdef1234567890abcdef12345678');
         $ch = $this->service->issue($fp, 'test.local');
         $this->assertSame(strtoupper($fp), $ch['fingerprint']);
+    }
+
+    public function testIssueStoresOrigin(): void {
+        $fp = '1234567890ABCDEF1234567890ABCDEF12345678';
+        $ch = $this->service->issue($fp, 'cloud.example.org', '', 'https://cloud.example.org');
+        $this->assertArrayHasKey('origin', $ch);
+        $this->assertSame('https://cloud.example.org', $ch['origin']);
+    }
+
+    public function testIssueDefaultsOriginToEmptyForV1Compat(): void {
+        $fp = '1234567890ABCDEF1234567890ABCDEF12345678';
+        $ch = $this->service->issue($fp, 'cloud.example.org');
+        $this->assertSame('', $ch['origin']);
     }
 
     public function testIssueEchoesClientNonce(): void {
@@ -144,7 +167,8 @@ class ChallengeServiceTest extends TestCase {
 
     // ── canonicalNoncePayload() ──────────────────────────────────────────────
 
-    public function testCanonicalNoncePayloadMatchesPythonFormat(): void {
+    public function testCanonicalNoncePayloadV1Format(): void {
+        // Legacy V1 (origin omitted) — dual-accept migration path.
         $payload = $this->service->canonicalNoncePayload(
             'abc-nonce',
             'base64==',
@@ -162,6 +186,64 @@ class ChallengeServiceTest extends TestCase {
             'expires=2026-02-28T12:01:00+00:00',
         ]);
         $this->assertSame($expected, $payload);
+    }
+
+    public function testCanonicalNoncePayloadV2Format(): void {
+        // V2: origin line sits between client_nonce and timestamp.
+        $payload = $this->service->canonicalNoncePayload(
+            'abc-nonce',
+            'base64==',
+            '2026-02-28T12:00:00+00:00',
+            'cloud.example.org',
+            '2026-02-28T12:01:00+00:00',
+            'https://cloud.example.org',
+        );
+
+        $expected = implode("\n", [
+            'CAPAUTH_NONCE_V2',
+            'nonce=abc-nonce',
+            'client_nonce=base64==',
+            'origin=https://cloud.example.org',
+            'timestamp=2026-02-28T12:00:00+00:00',
+            'service=cloud.example.org',
+            'expires=2026-02-28T12:01:00+00:00',
+        ]);
+        $this->assertSame($expected, $payload);
+    }
+
+    /**
+     * Cross-impl vector: PHP must produce byte-identical output to the SAME
+     * shared fixture that the Python (and JS) suites assert against. This is
+     * the guard against PHP-vs-Python canonical-payload drift.
+     */
+    public function testCanonicalNoncePayloadMatchesSharedVector(): void {
+        $vector = $this->loadSharedVector();
+        $f = $vector['fields'];
+
+        $v2 = $this->service->canonicalNoncePayload(
+            $f['nonce'], $f['client_nonce'], $f['timestamp'],
+            $f['service'], $f['expires'], $f['origin'],
+        );
+        $this->assertSame($vector['expected_v2'], $v2);
+
+        $v1 = $this->service->canonicalNoncePayload(
+            $f['nonce'], $f['client_nonce'], $f['timestamp'],
+            $f['service'], $f['expires'],
+        );
+        $this->assertSame($vector['expected_v1'], $v1);
+    }
+
+    /** Locate + decode the repo-root shared cross-impl test vector. */
+    private function loadSharedVector(): array {
+        $dir = __DIR__;
+        for ($i = 0; $i < 10; $i++) {
+            $candidate = $dir . '/tests/fixtures/canonical_nonce_v2_vector.json';
+            if (is_file($candidate)) {
+                return json_decode((string) file_get_contents($candidate), true);
+            }
+            $dir = dirname($dir);
+        }
+        $this->fail('Shared test vector canonical_nonce_v2_vector.json not found.');
     }
 
     // ── canonicalClaimsPayload() ─────────────────────────────────────────────

@@ -72,9 +72,24 @@ describe("buildCanonicalNoncePayload", () => {
     expires: "2026-01-01T00:01:00Z",
   };
 
-  it("starts with CAPAUTH_NONCE_V1 header", () => {
+  it("starts with CAPAUTH_NONCE_V1 header when origin absent (legacy)", () => {
     const payload = buildCanonicalNoncePayload(params);
     expect(payload.startsWith("CAPAUTH_NONCE_V1\n")).toBe(true);
+  });
+
+  it("emits CAPAUTH_NONCE_V2 with origin line when origin present", () => {
+    const payload = buildCanonicalNoncePayload({
+      ...params,
+      origin: "https://nextcloud.skworld.io",
+    });
+    const lines = payload.split("\n");
+    expect(lines[0]).toBe("CAPAUTH_NONCE_V2");
+    expect(lines[1]).toBe(`nonce=${params.nonce}`);
+    expect(lines[2]).toBe(`client_nonce=${params.clientNonce}`);
+    expect(lines[3]).toBe("origin=https://nextcloud.skworld.io");
+    expect(lines[4]).toBe(`timestamp=${params.timestamp}`);
+    expect(lines[5]).toBe(`service=${params.service}`);
+    expect(lines[6]).toBe(`expires=${params.expires}`);
   });
 
   it("contains all required fields in order", () => {
@@ -95,6 +110,58 @@ describe("buildCanonicalNoncePayload", () => {
   it("differs when any field changes", () => {
     const modified = { ...params, nonce: "different-nonce" };
     expect(buildCanonicalNoncePayload(params)).not.toBe(buildCanonicalNoncePayload(modified));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-impl test vector — must match Python + PHP byte-for-byte
+// ---------------------------------------------------------------------------
+
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+
+describe("buildCanonicalNoncePayload — shared cross-impl vector", () => {
+  // Walk up to the repo root to find the shared fixture (single source of
+  // truth shared with tests/test_verifier.py and the PHP *Test.php files).
+  function loadVector() {
+    let dir = dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 12; i++) {
+      const candidate = join(dir, "tests", "fixtures", "canonical_nonce_v2_vector.json");
+      try {
+        return JSON.parse(readFileSync(candidate, "utf-8"));
+      } catch {
+        dir = dirname(dir);
+      }
+    }
+    throw new Error("shared canonical_nonce_v2_vector.json not found");
+  }
+
+  it("produces byte-identical V2 output to the shared vector", () => {
+    const v = loadVector();
+    const f = v.fields;
+    const out = buildCanonicalNoncePayload({
+      nonce: f.nonce,
+      clientNonce: f.client_nonce,
+      origin: f.origin,
+      timestamp: f.timestamp,
+      service: f.service,
+      expires: f.expires,
+    });
+    expect(out).toBe(v.expected_v2);
+  });
+
+  it("produces byte-identical V1 output to the shared vector", () => {
+    const v = loadVector();
+    const f = v.fields;
+    const out = buildCanonicalNoncePayload({
+      nonce: f.nonce,
+      clientNonce: f.client_nonce,
+      timestamp: f.timestamp,
+      service: f.service,
+      expires: f.expires,
+    });
+    expect(out).toBe(v.expected_v1);
   });
 });
 

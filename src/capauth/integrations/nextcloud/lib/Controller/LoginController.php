@@ -104,7 +104,11 @@ class LoginController extends Controller {
             'service_name',
             $this->request->getServerHost(),
         );
-        $challenge = $this->challengeService->issue($fingerprint, $service, $clientNonce);
+        // Origin-binding (Tier A): the server ASSERTS its own canonical RP
+        // origin into the challenge so the client signs over it (V2). On verify
+        // we confirm the signed origin matches an allowed origin.
+        $origin    = $this->rpOrigin();
+        $challenge = $this->challengeService->issue($fingerprint, $service, $clientNonce, $origin);
 
         // Store fingerprint + challenge in the server-side session for the
         // subsequent verify() call.
@@ -197,15 +201,19 @@ class LoginController extends Controller {
             return new JSONResponse(['error' => 'key_not_found'], Http::STATUS_NOT_FOUND);
         }
 
-        // PGP verification.
+        // PGP verification + Tier-A origin assertion. The allowed origins
+        // default to the RP's own scheme+host (reverse-proxy aware); the
+        // dual-accept window is controlled by capauth.require_origin_binding.
         [$ok, $err] = $this->verifierService->verifyAuthResponse(
-            fingerprint:    $fingerprint,
-            nonceId:        $nonceId,
-            nonceSigArmor:  $nonceSig,
-            claims:         is_array($claims) ? $claims : [],
-            claimsSigArmor: $claimsSig,
-            publicKeyArmor: $publicKeyArmor,
-            challengeCtx:   $challengeCtx,
+            fingerprint:          $fingerprint,
+            nonceId:              $nonceId,
+            nonceSigArmor:        $nonceSig,
+            claims:               is_array($claims) ? $claims : [],
+            claimsSigArmor:       $claimsSig,
+            publicKeyArmor:       $publicKeyArmor,
+            challengeCtx:         $challengeCtx,
+            allowedOrigins:       $this->allowedOrigins(),
+            requireOriginBinding: $this->requireOriginBinding(),
         );
 
         if (!$ok) {
@@ -276,6 +284,60 @@ class LoginController extends Controller {
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    // ── Origin-binding helpers (Tier A) ──────────────────────────────────────
+
+    /**
+     * Compute this RP's canonical origin (scheme://host[:port]).
+     *
+     * Reverse-proxy aware: Nextcloud's `overwriteprotocol` / `overwritehost`
+     * config (set when behind a proxy) take precedence over the raw request
+     * values so the asserted origin matches the public-facing URL the browser
+     * actually used. Falls back to the request's own scheme + host.
+     */
+    private function rpOrigin(): string {
+        $proto = $this->config->getSystemValue('overwriteprotocol', '');
+        if (!is_string($proto) || $proto === '') {
+            $proto = $this->request->getServerProtocol() ?: 'https';
+        }
+
+        $host = $this->config->getSystemValue('overwritehost', '');
+        if (!is_string($host) || $host === '') {
+            $host = $this->request->getServerHost();
+        }
+
+        return strtolower($proto) . '://' . $host;
+    }
+
+    /**
+     * The RP-configured allowed origins for the V2 origin check.
+     *
+     * Config key `capauth.allowed_origins` (comma/whitespace separated). When
+     * unset it defaults to this RP's own origin ({@see rpOrigin()}).
+     *
+     * @return string[]
+     */
+    private function allowedOrigins(): array {
+        $raw = $this->config->getAppValue('capauth', 'allowed_origins', '');
+        if (is_string($raw) && trim($raw) !== '') {
+            $parts = preg_split('/[\s,]+/', trim($raw)) ?: [];
+            $parts = array_values(array_filter(array_map('trim', $parts), fn($p) => $p !== ''));
+            if (!empty($parts)) {
+                return $parts;
+            }
+        }
+        return [$this->rpOrigin()];
+    }
+
+    /**
+     * Whether V1 (origin-less) challenges must be rejected.
+     *
+     * Config key `capauth.require_origin_binding` (default false → dual-accept).
+     */
+    private function requireOriginBinding(): bool {
+        $val = $this->config->getAppValue('capauth', 'require_origin_binding', 'false');
+        return filter_var($val, FILTER_VALIDATE_BOOLEAN);
+    }
 
     private function parseJsonBody(): array {
         $raw = file_get_contents('php://input');

@@ -19,21 +19,77 @@ class VerifierService {
 
     // ── Canonical payload builders ───────────────────────────────────────────
 
+    /**
+     * Build the canonical nonce payload (V1 legacy or V2 origin-bound).
+     *
+     * Pass $origin === null for the legacy V1 payload (dual-accept migration);
+     * pass a non-empty origin string for the V2 origin-bound payload. The byte
+     * layout MUST match ChallengeService, the Python verifier, the login JS and
+     * the stage signers — a shared cross-impl test vector asserts this.
+     */
     public function canonicalNoncePayload(
         string $nonce,
         string $clientNonce,
         string $issuedAt,
         string $service,
         string $expiresAt,
+        ?string $origin = null,
     ): string {
+        if ($origin === null) {
+            return implode("\n", [
+                'CAPAUTH_NONCE_V1',
+                "nonce={$nonce}",
+                "client_nonce={$clientNonce}",
+                "timestamp={$issuedAt}",
+                "service={$service}",
+                "expires={$expiresAt}",
+            ]);
+        }
         return implode("\n", [
-            'CAPAUTH_NONCE_V1',
+            'CAPAUTH_NONCE_V2',
             "nonce={$nonce}",
             "client_nonce={$clientNonce}",
+            "origin={$origin}",
             "timestamp={$issuedAt}",
             "service={$service}",
             "expires={$expiresAt}",
         ]);
+    }
+
+    /**
+     * Normalise an origin for equality comparison (lowercase scheme+host,
+     * strip a trailing slash; port preserved). Does NOT change signed bytes.
+     */
+    public static function normalizeOrigin(string $origin): string {
+        $o = rtrim(trim($origin), '/');
+        if (str_contains($o, '://')) {
+            [$scheme, $rest] = explode('://', $o, 2);
+            return strtolower($scheme) . '://' . strtolower($rest);
+        }
+        return strtolower($o);
+    }
+
+    /**
+     * Tier-A origin assertion check.
+     *
+     * @param string|null $issuedOrigin    Origin bound into the signed payload,
+     *                                      or null for a legacy V1 challenge.
+     * @param string[]    $allowedOrigins  RP-configured allowed origins.
+     * @param bool        $requireBinding  When true, reject V1 (origin-less).
+     * @return array{0:bool, 1:string}     [ok, error_code]
+     */
+    public function checkOrigin(?string $issuedOrigin, array $allowedOrigins, bool $requireBinding = false): array {
+        if ($issuedOrigin === null || $issuedOrigin === '') {
+            if ($requireBinding) {
+                return [false, 'v1_rejected'];
+            }
+            return [true, ''];
+        }
+        $allowedNorm = array_map([self::class, 'normalizeOrigin'], array_filter($allowedOrigins, fn($o) => $o !== ''));
+        if (in_array(self::normalizeOrigin($issuedOrigin), $allowedNorm, true)) {
+            return [true, ''];
+        }
+        return [false, 'invalid_origin'];
     }
 
     public function canonicalClaimsPayload(
@@ -180,6 +236,15 @@ class VerifierService {
     /**
      * Verify a complete CapAuth authentication response.
      *
+     * Origin-binding (Tier A): the canonical payload is rebuilt from the stored
+     * challenge record. If that record carries a non-empty `origin` the V2
+     * (origin-bound) payload is rebuilt and the signed origin is asserted to
+     * equal one of $allowedOrigins (else `invalid_origin`). A record with no
+     * `origin` rebuilds the legacy V1 payload and is accepted unless
+     * $requireOriginBinding is true (then `v1_rejected`).
+     *
+     * @param string[] $allowedOrigins        RP-configured allowed origins.
+     * @param bool     $requireOriginBinding   Reject V1 challenges when true.
      * @return array{0:bool, 1:string}  [success, error_code]
      */
     public function verifyAuthResponse(
@@ -190,9 +255,23 @@ class VerifierService {
         string $claimsSigArmor,
         string $publicKeyArmor,
         array  $challengeCtx,
+        array  $allowedOrigins = [],
+        bool   $requireOriginBinding = false,
     ): array {
         if (trim($nonceSigArmor) === '') {
             return [false, 'invalid_nonce_signature'];
+        }
+
+        // Dispatch V1 vs V2 on the stored origin (server-asserted at issuance).
+        $issuedOrigin = isset($challengeCtx['origin']) && $challengeCtx['origin'] !== ''
+            ? (string) $challengeCtx['origin']
+            : null;
+
+        // Origin assertion BEFORE the signature is meaningful — and the
+        // signature also covers `origin`, so tampering invalidates it anyway.
+        [$originOk, $originErr] = $this->checkOrigin($issuedOrigin, $allowedOrigins, $requireOriginBinding);
+        if (!$originOk) {
+            return [false, $originErr];
         }
 
         $noncePayload = $this->canonicalNoncePayload(
@@ -201,6 +280,7 @@ class VerifierService {
             $challengeCtx['issued_at'],
             $challengeCtx['service'],
             $challengeCtx['expires_at'],
+            $issuedOrigin,
         );
 
         if (!$this->verifySignature($noncePayload, $nonceSigArmor, $publicKeyArmor)) {
