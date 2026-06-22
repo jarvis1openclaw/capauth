@@ -14,6 +14,30 @@ All paths below are relative to this app directory:
 
 ---
 
+## ⭐ CURRENT STATUS (2026-06-22)
+
+| # | Step | State |
+|---|------|-------|
+| 0 | App Store account `chefboyrdave21` (sso `chefboyrdave2.1@gmail.com`, acct `chefboyrdave2.1@douno.it`) | ✅ exists |
+| 0 | App Store **API token** | ✅ **VERIFIED WORKING** — no-token POST→401, token POST→400 "download/signature required" (authenticated). Token stored as a secret; rotate after first use. |
+| 1a | Code-signing keypair + CSR (`certificates/capauth.{key,csr}`, CN=`capauth`) | ✅ done; key gitignored, CSR tracked |
+| — | App id `capauth` free on the store | ✅ confirmed (not in the 394 NC30 apps) |
+| 2 | `info.xml` (v0.3.0, AGPL-3.0-or-later, security+integration, NC 27–34) | ✅ **validates vs the live App Store XSD** |
+| 2 | Screenshot `screenshots/login.png` | ✅ added (real CapAuth login page, 1599×912) |
+| 3 | `build-release.sh` + `krankerl.toml` | ✅ ready |
+| 5 | GitHub Actions release CI | ✅ committed |
+| 1b | **Cert-request PR** → `nextcloud/app-certificate-requests` | ⛔ **BLOCKED**: `chefboyrdave21` has **no public email** (required) + opening a PR to a 3rd-party org needs Chef's go-ahead. PR content ready in `CSR-PR.md`. |
+| 1c | Receive + commit signed `capauth.crt` | ⬜ after 1b (Nextcloud maintainers sign manually) |
+| 4a | Host release tarball (GitHub release) | ⬜ after the cert (need it to sign the tarball) |
+| 4d | POST release to `/api/v1/apps/releases` | ⬜ last step (token ready) |
+
+**Critical-path blocker = the cert (step 1b/1c).** Everything else is ready. The release POST cannot
+succeed until the `capauth` code-signing cert is registered, because the store validates the tarball
+signature against it. **Next human action: set a public email on the `chefboyrdave21` GitHub profile, then
+approve submitting the cert PR.**
+
+---
+
 ## 0. One-time prerequisites
 
 | Item | Owner | Notes |
