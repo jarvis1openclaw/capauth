@@ -27,15 +27,16 @@ from typing import Any, Optional
 
 import httpx
 import jwt
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from ..authentik.nonce_store import issue, peek
 from ..authentik.stage import build_challenge, verify_auth_response
 from ..authentik.verifier import fingerprint_from_armor
 from .. import integration as _integration
+from .bunker import BunkerBroker, build_pairing_uri
 from .keystore import KeyStore
 from .oidc import build_oidc_router
 from .oidc.provider import discovery_document as _oidc_discovery_document
@@ -1246,3 +1247,159 @@ async def qr_verify_endpoint(nonce_id: str, req: VerifyRequest) -> dict[str, Any
     _qr_results[nonce_id] = result_data
 
     return result_data
+
+
+# ---------------------------------------------------------------------------
+# CapAuth Bunker — NIP-46-style remote signer (SPIKE)
+#
+# The phone holds the PGP key; the desktop relays the canonical CAPAUTH_NONCE_V2
+# payload over this broker for the phone to sign. The broker only relays — it
+# never sees the private key. See bunker.py for the protocol + hardening notes.
+# ---------------------------------------------------------------------------
+
+_bunker = BunkerBroker()
+
+# Directory holding the phone-signer PWA static assets.
+_PHONE_SIGNER_DIR = Path(__file__).resolve().parent.parent.parent.parent / "phone-signer"
+
+
+def _broker_host() -> str:
+    """Resolve the broker host advertised in the pairing URI.
+
+    Prefers ``CAPAUTH_BUNKER_HOST`` (e.g. a Tailscale Funnel host) then
+    ``CAPAUTH_BASE_URL`` host, then ``SERVICE_ID``.
+    """
+    explicit = os.environ.get("CAPAUTH_BUNKER_HOST", "")
+    if explicit:
+        return explicit
+    base = os.environ.get("CAPAUTH_BASE_URL", "")
+    if base:
+        from urllib.parse import urlparse
+
+        netloc = urlparse(base).netloc
+        if netloc:
+            return netloc
+    return SERVICE_ID
+
+
+def _relay_ws_url(host: str) -> str:
+    """Build the wss:// relay URL the phone connects to."""
+    scheme = "ws" if host.startswith("localhost") or host.startswith("127.") else "wss"
+    return f"{scheme}://{host}/bunker/ws"
+
+
+class BunkerSessionResponse(BaseModel):
+    """Pairing session creation response (returned to the desktop client)."""
+
+    session_id: str
+    pairing_secret: str
+    broker_host: str
+    relay_ws_url: str
+    pairing_uri: str
+    qr_data_url: str = ""
+    expires_in: int = 300
+
+
+@app.post("/bunker/session", response_model=BunkerSessionResponse)
+async def bunker_create_session() -> dict[str, Any]:
+    """Create a remote-signer pairing session and return the pairing URI + QR.
+
+    The desktop client calls this, renders the QR, and connects to the relay as
+    ``role=client``. The phone scans the QR (``capauth-bunker://...``), connects
+    as ``role=signer``, and both receive a ``paired`` event.
+    """
+    created = _bunker.create_session()
+    host = _broker_host()
+    relay = _relay_ws_url(host)
+    uri = build_pairing_uri(host, created["session_id"], created["pairing_secret"], relay)
+
+    qr_data_url = ""
+    try:
+        import base64
+        import io
+
+        import segno
+
+        qr = segno.make(uri, error="m")
+        buf = io.BytesIO()
+        qr.save(buf, kind="png", scale=6, dark="#7C3AED", light="#0f0f1a")
+        qr_data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    except ImportError:
+        logger.warning("segno not installed — bunker QR data URL unavailable")
+
+    return BunkerSessionResponse(
+        session_id=created["session_id"],
+        pairing_secret=created["pairing_secret"],
+        broker_host=host,
+        relay_ws_url=relay,
+        pairing_uri=uri,
+        qr_data_url=qr_data_url,
+    ).model_dump()
+
+
+@app.websocket("/bunker/ws")
+async def bunker_ws(websocket: WebSocket) -> None:
+    """WebSocket relay endpoint for the bunker protocol.
+
+    Query params:
+        session: the pairing session id.
+        role: ``client`` (desktop) or ``signer`` (phone).
+        key: the pairing secret.
+
+    The broker validates the session + pairing secret, registers the peer, emits
+    ``paired`` when both sides are present, then relays ``sign_request`` /
+    ``sign_response`` / ``approve`` / ``reject`` messages between them. The
+    relayed payload is opaque to the broker.
+    """
+    session_id = websocket.query_params.get("session", "")
+    role = websocket.query_params.get("role", "")
+    pairing_secret = websocket.query_params.get("key", "")
+
+    await websocket.accept()
+
+    err = await _bunker.join(session_id, role, pairing_secret, websocket)
+    if err is not None:
+        await websocket.send_json({"type": "error", "code": err})
+        await websocket.close(code=4400)
+        return
+
+    try:
+        while True:
+            message = await websocket.receive_json()
+            relay_err = await _bunker.relay(session_id, role, message)
+            if relay_err is not None:
+                await websocket.send_json(
+                    {"type": "error", "code": relay_err, "ref": message.get("id", "")}
+                )
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("bunker ws error (%s/%s): %s", session_id, role, exc)
+    finally:
+        await _bunker.leave(session_id, role)
+
+
+@app.get("/bunker/", response_class=HTMLResponse)
+@app.get("/bunker/signer", response_class=HTMLResponse)
+async def phone_signer_page() -> Any:
+    """Serve the phone-signer PWA entry page (mobile-friendly)."""
+    index = _PHONE_SIGNER_DIR / "index.html"
+    if index.exists():
+        return FileResponse(str(index), media_type="text/html")
+    raise HTTPException(status_code=404, detail="phone-signer PWA not bundled")
+
+
+@app.get("/bunker/{asset:path}")
+async def phone_signer_asset(asset: str) -> Any:
+    """Serve a phone-signer PWA static asset (manifest, service worker, js, css).
+
+    Path-traversal guarded: the resolved path must stay within the PWA dir.
+    """
+    target = (_PHONE_SIGNER_DIR / asset).resolve()
+    try:
+        target.relative_to(_PHONE_SIGNER_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="forbidden")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(str(target))

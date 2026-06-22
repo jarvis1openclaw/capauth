@@ -1,0 +1,204 @@
+/**
+ * CapAuth Bunker — phone-signer PWA controller (SPIKE).
+ *
+ * Wires the three steps:
+ *   1. Import an armored PGP key → encrypt at rest (keyvault PBKDF2→AES-GCM) in
+ *      localStorage. Unlock decrypts it into an in-memory session only.
+ *   2. Pair: paste/scan the capauth-bunker:// URI, connect as role=signer.
+ *   3. On each sign_request: show the approval modal (origin + fingerprint +
+ *      exact bytes) and, if approved, sign with OpenPGP.js and return the sig.
+ *
+ * The private key is held in plaintext only transiently in `session.armoredKey`
+ * after unlock; it is never sent anywhere. OpenPGP.js is loaded globally (UMD).
+ */
+
+import { encryptPrivateKey, decryptPrivateKey, isEncryptedEnvelope } from "./lib/keyvault.js";
+import { startSigner } from "./lib/bunker-signer.js";
+
+const openpgp = globalThis.openpgp;
+const STORE_KEY = "capauth_bunker_envelope";
+const FP_KEY = "capauth_bunker_fp";
+
+const session = {
+  armoredKey: null, // decrypted, in-memory only
+  fingerprint: "",
+  signerHandle: null,
+};
+
+// --- tiny DOM helpers -------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+function setStatus(el, text, kind = "") {
+  el.textContent = text;
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+// --- key import / encrypt-at-rest ------------------------------------------
+async function fingerprintOf(armored) {
+  const key = await openpgp.readKey({ armoredKey: armored });
+  return key.getFingerprint().toUpperCase();
+}
+
+async function storeKey() {
+  const armored = $("priv-key").value.trim();
+  const vaultPass = $("vault-pass").value;
+  if (!armored) return setStatus($("key-status"), "Paste an armored private key.", "err");
+  if (!vaultPass) return setStatus($("key-status"), "A vault passphrase is required.", "err");
+  try {
+    // Validate it's a real (private) key + capture fingerprint.
+    const priv = await openpgp.readPrivateKey({ armoredKey: armored });
+    const fp = priv.getFingerprint().toUpperCase();
+    const envelope = await encryptPrivateKey(armored, vaultPass);
+    localStorage.setItem(STORE_KEY, JSON.stringify(envelope));
+    localStorage.setItem(FP_KEY, fp);
+    $("priv-key").value = "";
+    $("pgp-pass").value = "";
+    $("vault-pass").value = "";
+    setStatus($("key-status"), "Key encrypted + stored on this phone.", "ok");
+    renderKeyState();
+  } catch (err) {
+    setStatus($("key-status"), "Could not read/store key: " + err.message, "err");
+  }
+}
+
+async function unlockKey() {
+  const raw = localStorage.getItem(STORE_KEY);
+  const pass = $("unlock-pass").value;
+  if (!raw) return setStatus($("key-status"), "No stored key.", "err");
+  if (!pass) return setStatus($("key-status"), "Enter the vault passphrase.", "err");
+  try {
+    const envelope = JSON.parse(raw);
+    if (!isEncryptedEnvelope(envelope)) throw new Error("corrupt envelope");
+    session.armoredKey = await decryptPrivateKey(envelope, pass);
+    session.fingerprint = await fingerprintOf(session.armoredKey);
+    $("unlock-pass").value = "";
+    setStatus($("key-status"), "Unlocked. Ready to pair.", "ok");
+    setStatus($("pair-status"), "Ready — paste the desktop's Bunker URI.");
+    $("btn-pair").disabled = false;
+  } catch (err) {
+    setStatus($("key-status"), "Unlock failed: " + err.message, "err");
+  }
+}
+
+function forgetKey() {
+  localStorage.removeItem(STORE_KEY);
+  localStorage.removeItem(FP_KEY);
+  session.armoredKey = null;
+  session.fingerprint = "";
+  renderKeyState();
+  setStatus($("key-status"), "Key forgotten.", "");
+}
+
+function renderKeyState() {
+  const fp = localStorage.getItem(FP_KEY);
+  if (fp) {
+    $("key-import").classList.add("hidden");
+    $("key-unlock").classList.remove("hidden");
+    $("loaded-fp").textContent = fp;
+    setStatus($("key-status"), session.armoredKey ? "Unlocked." : "Locked — unlock to sign.",
+      session.armoredKey ? "ok" : "");
+  } else {
+    $("key-import").classList.remove("hidden");
+    $("key-unlock").classList.add("hidden");
+  }
+}
+
+// --- pairing + signer loop --------------------------------------------------
+function parseBunkerUri(uri) {
+  // capauth-bunker://<host>/<session>?key=<secret>&relay=<wss-url>
+  const m = /^capauth-bunker:\/\/([^/]+)\/([^?]+)\?(.*)$/.exec(uri.trim());
+  if (!m) throw new Error("not a capauth-bunker URI");
+  const host = m[1];
+  const sessionId = decodeURIComponent(m[2]);
+  const params = new URLSearchParams(m[3]);
+  const relay = params.get("relay") || `wss://${host}/bunker/ws`;
+  return { host, sessionId, pairingSecret: params.get("key") || "", relay };
+}
+
+function connect() {
+  if (!session.armoredKey) {
+    return setStatus($("pair-status"), "Unlock a key first.", "err");
+  }
+  let parsed;
+  try {
+    parsed = parseBunkerUri($("bunker-uri").value);
+  } catch (err) {
+    return setStatus($("pair-status"), err.message, "err");
+  }
+  setStatus($("pair-status"), "Connecting to broker…");
+
+  session.signerHandle = startSigner({
+    relayWsUrl: parsed.relay,
+    sessionId: parsed.sessionId,
+    pairingSecret: parsed.pairingSecret,
+    getFingerprint: () => session.fingerprint,
+    requestApproval: showApproval,
+    sign: async (canonicalPayload) => {
+      const privateKey = await openpgp.readPrivateKey({ armoredKey: session.armoredKey });
+      const signature = await openpgp.sign({
+        message: await openpgp.createMessage({ text: canonicalPayload }),
+        signingKeys: privateKey,
+        detached: true,
+      });
+      return signature;
+    },
+    onStatus: (s) => {
+      const map = {
+        connected: ["Connected. Waiting to pair…", ""],
+        paired: ["Paired with desktop. Awaiting sign requests…", "ok"],
+        signed: ["Signed + returned to desktop.", "ok"],
+        rejected: ["You rejected the request.", ""],
+        peer_left: ["Desktop disconnected.", "err"],
+        closed: ["Connection closed.", ""],
+        error: ["Relay error.", "err"],
+      };
+      const e = map[s] || (s.startsWith("error:") ? ["Broker: " + s.slice(6), "err"] : null);
+      if (e) setStatus($("pair-status"), e[0], e[1]);
+    },
+  });
+}
+
+// --- approval modal (phishing-resistant: shows the origin + bytes) ----------
+function showApproval(req) {
+  return new Promise((resolve) => {
+    $("ap-origin").textContent = req.origin || "(no origin — INSECURE)";
+    $("ap-fp").textContent = session.fingerprint;
+    $("ap-payload").textContent = req.payload;
+    const warn = [];
+    if (!req.origin) warn.push("⚠ No origin bound — cannot verify the website.");
+    if (req.version !== "CAPAUTH_NONCE_V2") warn.push("⚠ Legacy payload (" + req.version + ").");
+    if (req.fingerprint && req.fingerprint.toUpperCase() !== session.fingerprint) {
+      warn.push("⚠ Desktop expected a different fingerprint.");
+    }
+    $("ap-warn").textContent = warn.join("  ");
+    $("approve-modal").classList.remove("hidden");
+
+    const close = (val) => {
+      $("approve-modal").classList.add("hidden");
+      $("btn-approve").onclick = null;
+      $("btn-reject").onclick = null;
+      resolve(val);
+    };
+    $("btn-approve").onclick = () => close(true);
+    $("btn-reject").onclick = () => close(false);
+  });
+}
+
+// --- wire up ----------------------------------------------------------------
+$("btn-store").onclick = storeKey;
+$("btn-unlock").onclick = unlockKey;
+$("btn-forget").onclick = forgetKey;
+$("btn-pair").onclick = connect;
+
+// Allow opening with the URI pre-filled: /bunker/?uri=... or #capauth-bunker://
+const fromQuery = new URLSearchParams(location.search).get("uri");
+const fromHash = location.hash.startsWith("#capauth-bunker")
+  ? location.hash.slice(1)
+  : "";
+if (fromQuery || fromHash) $("bunker-uri").value = fromQuery || fromHash;
+
+renderKeyState();
+
+// PWA service worker
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}

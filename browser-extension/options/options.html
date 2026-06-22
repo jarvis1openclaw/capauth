@@ -399,6 +399,52 @@
           <div class="radio-desc">Key <strong>never enters the browser</strong>. Signs via OS gpg/gpg-agent — supports YubiKey/smartcard. Best local custody.</div>
         </div>
       </label>
+      <label class="radio-row">
+        <input type="radio" name="signer-backend" value="remote">
+        <div>
+          <div class="radio-title">Remote signer — your phone (CapAuth Bunker)</div>
+          <div class="radio-desc">Key <strong>never touches this device</strong>. Your paired <strong>phone</strong> holds the key and approves each sign-in (NIP-46 style). Best for cross-device.</div>
+        </div>
+      </label>
+    </div>
+  </div>
+
+  <!-- Backend: remote (CapAuth Bunker) -->
+  <div id="backend-remote" class="backend-panel" style="display:none">
+    <div class="security-notice" style="background:rgba(124,58,237,0.08);border-color:rgba(124,58,237,0.25);color:#a78bfa">
+      Your private key lives on your <strong>phone</strong>, encrypted at rest. This device sends the
+      challenge to the phone over a relay; the phone shows the website + fingerprint, you approve, and
+      the phone returns the signature. The relay <strong>never sees the key</strong>.
+    </div>
+
+    <div class="field">
+      <label>Signing key fingerprint (the phone's key)</label>
+      <input type="text" class="fingerprint-input" id="remote-fingerprint"
+             placeholder="40-char fingerprint of the phone's PGP key"
+             maxlength="40" spellcheck="false" autocomplete="off">
+      <div class="field-hint">Used to display + verify which key the phone signs with.</div>
+    </div>
+
+    <div class="field">
+      <label>Pair a phone</label>
+      <div style="margin-top:8px"><button class="btn btn-primary" id="btn-bunker-pair" type="button">Create pairing QR</button></div>
+      <div id="bunker-qr" style="margin-top:12px;text-align:center;display:none">
+        <img id="bunker-qr-img" alt="Pairing QR" width="220" height="220" style="border-radius:8px;background:#0f0f1a;padding:8px"/>
+        <div class="field-hint" id="bunker-uri" style="word-break:break-all;font-family:monospace;margin-top:6px"></div>
+      </div>
+      <div id="bunker-status" class="field-hint"></div>
+      <div class="field-hint">
+        On your phone, open the <strong>CapAuth Bunker</strong> PWA (served at <code>/bunker/</code> on
+        the CapAuth service), import your key, then scan this QR. Set the broker URL below.
+      </div>
+    </div>
+
+    <div class="field">
+      <label>CapAuth service base URL (broker)</label>
+      <input type="text" id="bunker-base-url"
+             placeholder="https://capauth-skstack41.skworld.io"
+             spellcheck="false" autocomplete="off">
+      <div class="field-hint">Where the broker (<code>/bunker/session</code> + <code>/bunker/ws</code>) lives. Use a Tailscale Funnel URL when remote.</div>
     </div>
   </div>
 

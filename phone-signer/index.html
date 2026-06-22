@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f0f1a" />
+  <title>CapAuth Bunker — Phone Signer</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <style>
+    :root {
+      --bg:#0f0f1a; --card:#1a1a35; --accent:#7C3AED; --accent2:#a78bfa;
+      --cyan:#00e5ff; --text:#e2e8f0; --muted:#64748b; --ok:#10b981; --err:#ef4444;
+    }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body {
+      background:var(--bg); color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      min-height:100vh; padding:env(safe-area-inset-top) 16px 24px;
+      display:flex; flex-direction:column; align-items:center;
+    }
+    header { text-align:center; padding:24px 0 8px; }
+    header h1 { font-size:20px; color:var(--accent2); }
+    header .sub { color:var(--muted); font-size:12px; margin-top:4px; }
+    .card {
+      background:var(--card); border:1px solid rgba(124,58,237,0.2);
+      border-radius:16px; padding:20px; width:100%; max-width:440px; margin-top:16px;
+    }
+    .card h2 { font-size:14px; color:var(--accent2); margin-bottom:12px; text-transform:uppercase; letter-spacing:.05em; }
+    label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+    textarea, input {
+      width:100%; background:var(--bg); color:var(--text);
+      border:1px solid rgba(124,58,237,0.3); border-radius:8px; padding:10px;
+      font-family:monospace; font-size:12px;
+    }
+    textarea { min-height:90px; resize:vertical; }
+    button {
+      background:var(--accent); color:#fff; border:none; border-radius:8px;
+      padding:12px 18px; font-size:14px; font-weight:600; cursor:pointer;
+      width:100%; margin-top:12px;
+    }
+    button.secondary { background:#334155; }
+    button.ok { background:var(--ok); }
+    button.danger { background:var(--err); }
+    button:disabled { opacity:.5; }
+    .row { display:flex; gap:8px; }
+    .row button { margin-top:0; }
+    .status { font-size:12px; color:var(--muted); margin-top:12px; min-height:16px; }
+    .status.ok { color:var(--ok); } .status.err { color:var(--err); }
+    .pill { display:inline-block; background:rgba(124,58,237,.15); border:1px solid rgba(124,58,237,.4);
+      border-radius:999px; padding:3px 10px; font-size:11px; color:var(--accent2); }
+    .fp { font-family:monospace; color:var(--cyan); font-size:11px; word-break:break-all; }
+    .hidden { display:none; }
+    .approve {
+      position:fixed; inset:0; background:rgba(8,8,20,.92); z-index:50;
+      display:flex; align-items:center; justify-content:center; padding:16px;
+    }
+    .approve .panel {
+      background:var(--card); border:1px solid var(--accent); border-radius:16px;
+      padding:22px; max-width:460px; width:100%;
+    }
+    .approve h3 { color:var(--accent2); font-size:16px; margin-bottom:6px; }
+    .kv { margin:10px 0; }
+    .kv .k { font-size:11px; color:var(--muted); text-transform:uppercase; }
+    .kv .v { font-size:13px; word-break:break-all; }
+    .kv .v.origin { color:var(--cyan); font-weight:600; }
+    .payload {
+      background:var(--bg); border:1px solid rgba(124,58,237,.3); border-radius:8px;
+      padding:10px; font-family:monospace; font-size:10px; white-space:pre-wrap;
+      max-height:140px; overflow:auto; margin-top:6px;
+    }
+    .warn { color:#f59e0b; font-size:11px; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🛡️ CapAuth Bunker</h1>
+    <div class="sub">Your phone holds the key. The key never leaves this device.</div>
+  </header>
+
+  <!-- Step 1: key -->
+  <section class="card" id="key-card">
+    <h2>1 · Key</h2>
+    <div id="key-status" class="status">No key loaded.</div>
+    <div id="key-import">
+      <label>Armored PGP private key</label>
+      <textarea id="priv-key" placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----"></textarea>
+      <label>Key passphrase (PGP) — optional</label>
+      <input id="pgp-pass" type="password" autocomplete="off" />
+      <label>Vault passphrase (encrypts the key on this phone)</label>
+      <input id="vault-pass" type="password" autocomplete="off" />
+      <button id="btn-store">Encrypt &amp; store on this phone</button>
+    </div>
+    <div id="key-unlock" class="hidden">
+      <span class="pill" id="loaded-fp"></span>
+      <label>Vault passphrase</label>
+      <input id="unlock-pass" type="password" autocomplete="off" />
+      <div class="row">
+        <button id="btn-unlock">Unlock</button>
+        <button id="btn-forget" class="secondary">Forget key</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Step 2: pair -->
+  <section class="card" id="pair-card">
+    <h2>2 · Pair with desktop</h2>
+    <label>Bunker URI (scan QR or paste)</label>
+    <input id="bunker-uri" placeholder="capauth-bunker://host/session?key=..." />
+    <button id="btn-pair" disabled>Connect</button>
+    <div id="pair-status" class="status">Load + unlock a key first.</div>
+  </section>
+
+  <!-- Approval modal -->
+  <div class="approve hidden" id="approve-modal">
+    <div class="panel">
+      <h3>Approve sign-in?</h3>
+      <div class="kv"><div class="k">Website (origin)</div><div class="v origin" id="ap-origin"></div></div>
+      <div class="kv"><div class="k">Will sign as fingerprint</div><div class="v fp" id="ap-fp"></div></div>
+      <div class="kv"><div class="k">Exact bytes to sign</div><div class="payload" id="ap-payload"></div></div>
+      <div class="warn" id="ap-warn"></div>
+      <div class="row" style="margin-top:14px;">
+        <button class="ok" id="btn-approve">Approve &amp; sign</button>
+        <button class="danger" id="btn-reject">Reject</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OpenPGP.js — vendored copy preferred for sovereignty; CDN for the spike. -->
+  <script src="https://unpkg.com/openpgp@5.11.0/dist/openpgp.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -23,6 +23,8 @@
  *                           decrypted into the in-memory unlock session.
  *   3. "native-gpg"       — key NEVER enters the browser; a Native Messaging
  *                           host signs via OS gpg/gpg-agent (YubiKey/smartcard).
+ *   4. "remote"           — key NEVER touches this device; a PAIRED PHONE
+ *                           ("CapAuth Bunker", NIP-46-style) signs over a relay.
  *
  * @module signer-backends
  */
@@ -34,6 +36,7 @@ export const SIGNER_BACKENDS = Object.freeze({
   LOCAL_PLAINTEXT: "local-plaintext",
   LOCAL_ENCRYPTED: "local-encrypted",
   NATIVE_GPG: "native-gpg",
+  REMOTE: "remote",
 });
 
 export const DEFAULT_BACKEND = SIGNER_BACKENDS.LOCAL_PLAINTEXT;
@@ -271,6 +274,178 @@ function defaultNativeTransport(request) {
 }
 
 // ---------------------------------------------------------------------------
+// Backend #4 — remote ("CapAuth Bunker", NIP-46-style phone signer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Signs by relaying the canonical payload to a PAIRED PHONE over the CapAuth
+ * Bunker broker. The private key NEVER enters the browser — it lives only on
+ * the phone. This backend posts a `sign_request` over the broker WebSocket and
+ * awaits the phone-produced armored detached signature.
+ *
+ * Custody: BEST for cross-device. Key stays on the phone (encrypted at rest via
+ * keyvault); the desktop only ever sees ciphertext-of-payload-in, signature-out.
+ *
+ * Pairing is performed out of band (the popup/options renders a QR encoding the
+ * `capauth-bunker://` URI from POST /bunker/session; the phone scans it). Once
+ * paired, this backend connects as `role=client` and relays.
+ *
+ * Bunker message protocol (see src/capauth/service/bunker.py):
+ *   client -> signer: {type:"sign_request", id, payload, origin, fingerprint,
+ *                      version:"CAPAUTH_NONCE_V2"}
+ *   signer -> client: {type:"sign_response", id, signature, fingerprint}
+ *                     {type:"reject", id, reason}
+ *
+ * The canonical bytes are signed VERBATIM by the phone — the load-bearing
+ * cross-impl contract holds across the relay (the desktop builds the bytes and
+ * the phone signs exactly those bytes; the phone re-derives nothing).
+ */
+export class RemoteBunkerBackend {
+  /**
+   * @param {Object} opts
+   * @param {string} opts.fingerprint - Expected signer fingerprint (display +
+   *   post-verify check). The phone returns the fp it actually signed with.
+   * @param {string} [opts.relayWsUrl] - The wss:// /bunker/ws URL (the desktop
+   *   connects as role=client to this). Set during pairing.
+   * @param {string} [opts.sessionId] - Paired session id.
+   * @param {string} [opts.pairingSecret] - Pairing secret (key query param).
+   * @param {string} [opts.origin] - RP origin to bind + display on the phone.
+   * @param {function(Object): Promise<Object>} [opts.relayRoundTrip] - Sends one
+   *   sign_request and resolves the sign_response. Injectable for tests;
+   *   defaults to a one-shot WebSocket transport.
+   * @param {number} [opts.timeoutMs] - Approval timeout (default 120s).
+   */
+  constructor({
+    fingerprint,
+    relayWsUrl,
+    sessionId,
+    pairingSecret,
+    origin,
+    relayRoundTrip,
+    timeoutMs,
+  } = {}) {
+    this.fingerprint = (fingerprint || "").toUpperCase();
+    this.relayWsUrl = relayWsUrl || "";
+    this.sessionId = sessionId || "";
+    this.pairingSecret = pairingSecret || "";
+    this.origin = origin || "";
+    this.timeoutMs = timeoutMs || 120_000;
+    this.relayRoundTrip = relayRoundTrip || ((req) => this._defaultRelay(req));
+  }
+
+  async getFingerprint() {
+    return this.fingerprint;
+  }
+
+  /**
+   * @param {string} canonicalPayload - Exact CAPAUTH_NONCE_V2 string to sign.
+   * @returns {Promise<string>} ASCII-armored detached signature from the phone.
+   */
+  async sign(canonicalPayload) {
+    if (typeof canonicalPayload !== "string" || !canonicalPayload) {
+      throw new Error("Nothing to sign (remote backend).");
+    }
+    if (!this.sessionId || !this.relayWsUrl) {
+      throw new Error("No paired phone. Pair a CapAuth Bunker first.");
+    }
+    const reqId =
+      (globalThis.crypto && globalThis.crypto.randomUUID && globalThis.crypto.randomUUID()) ||
+      String(Date.now()) + Math.random().toString(16).slice(2);
+
+    const request = {
+      type: "sign_request",
+      id: reqId,
+      payload: canonicalPayload,
+      origin: this.origin,
+      fingerprint: this.fingerprint,
+      version: "CAPAUTH_NONCE_V2",
+    };
+
+    const res = await this.relayRoundTrip(request);
+    if (!res) throw new Error("Phone returned no response.");
+    if (res.type === "reject") {
+      throw new Error(`Phone rejected the signature${res.reason ? ": " + res.reason : "."}`);
+    }
+    if (res.type === "error") {
+      throw new Error(`Bunker error: ${res.code || "unknown"}`);
+    }
+    if (!res.signature) throw new Error("Phone returned no signature.");
+    // Origin-binding integrity: if the phone reports the fp it signed with and
+    // we have an expected fp, they must match (the phone displayed + signed the
+    // origin we sent; this guards against a swapped key).
+    if (this.fingerprint && res.fingerprint) {
+      if (String(res.fingerprint).toUpperCase() !== this.fingerprint) {
+        throw new Error("Phone signed with an unexpected fingerprint.");
+      }
+    }
+    return res.signature;
+  }
+
+  /**
+   * Default WebSocket relay: connect as role=client, await `paired`, send the
+   * sign_request, resolve the matching sign_response (or reject/timeout).
+   *
+   * @param {Object} request - the sign_request envelope.
+   * @returns {Promise<Object>} the response envelope.
+   */
+  _defaultRelay(request) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const url =
+        `${this.relayWsUrl}?session=${encodeURIComponent(this.sessionId)}` +
+        `&role=client&key=${encodeURIComponent(this.pairingSecret)}`;
+      let ws;
+      const finish = (fn, arg) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          ws && ws.close && ws.close();
+        } catch {
+          /* ignore */
+        }
+        fn(arg);
+      };
+      const timer = setTimeout(
+        () => finish(reject, new Error("Timed out waiting for phone approval.")),
+        this.timeoutMs
+      );
+      try {
+        ws = new WebSocket(url);
+      } catch (err) {
+        return finish(reject, new Error(`Cannot connect to bunker relay: ${err.message}`));
+      }
+      let sent = false;
+      ws.onmessage = (evt) => {
+        let msg;
+        try {
+          msg = JSON.parse(evt.data);
+        } catch {
+          return;
+        }
+        if (msg.type === "paired" && !sent) {
+          sent = true;
+          ws.send(JSON.stringify(request));
+          return;
+        }
+        if (
+          (msg.type === "sign_response" || msg.type === "reject") &&
+          msg.id === request.id
+        ) {
+          finish(resolve, msg);
+        } else if (msg.type === "error") {
+          finish(resolve, msg);
+        }
+      };
+      ws.onerror = () => finish(reject, new Error("Bunker relay socket error."));
+      ws.onclose = () => {
+        if (!settled) finish(reject, new Error("Bunker relay closed before signing."));
+      };
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -305,6 +480,18 @@ export function createSignerBackend(settings = {}, hooks = {}) {
         fingerprint,
         sendNativeMessage: hooks.sendNativeMessage,
       });
+
+    case SIGNER_BACKENDS.REMOTE: {
+      const pairing = settings.bunkerPairing || {};
+      return new RemoteBunkerBackend({
+        fingerprint,
+        relayWsUrl: pairing.relayWsUrl || settings.bunkerRelayWsUrl || "",
+        sessionId: pairing.sessionId || "",
+        pairingSecret: pairing.pairingSecret || "",
+        origin: hooks.origin || settings.origin || "",
+        relayRoundTrip: hooks.relayRoundTrip,
+      });
+    }
 
     case SIGNER_BACKENDS.LOCAL_PLAINTEXT:
     default:

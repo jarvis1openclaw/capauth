@@ -6,6 +6,8 @@
  *   - local-plaintext: armored key stored UNENCRYPTED (testing).
  *   - local-encrypted: armored key encrypted at rest (PBKDF2 → AES-GCM).
  *   - native-gpg:      key never enters the browser; signs via gpg-agent host.
+ *   - remote:          key lives on a paired PHONE (CapAuth Bunker); the phone
+ *                      signs over a relay. Pairing state is stored here.
  *
  * @module options
  */
@@ -19,6 +21,7 @@ const BACKENDS = {
   PLAINTEXT: "local-plaintext",
   ENCRYPTED: "local-encrypted",
   NATIVE: "native-gpg",
+  REMOTE: "remote",
 };
 
 const DEFAULTS = {
@@ -29,6 +32,9 @@ const DEFAULTS = {
   encryptedKey: null,
   signerBackend: BACKENDS.PLAINTEXT,
   autoSign: false,
+  // Remote signer (CapAuth Bunker) pairing state.
+  bunkerBaseUrl: "",
+  bunkerPairing: null, // { sessionId, pairingSecret, relayWsUrl }
 };
 
 let currentSettings = { ...DEFAULTS };
@@ -55,6 +61,7 @@ function syncBackendPanels() {
   $("backend-local-plaintext").style.display = backend === BACKENDS.PLAINTEXT ? "block" : "none";
   $("backend-local-encrypted").style.display = backend === BACKENDS.ENCRYPTED ? "block" : "none";
   $("backend-native-gpg").style.display = backend === BACKENDS.NATIVE ? "block" : "none";
+  $("backend-remote").style.display = backend === BACKENDS.REMOTE ? "block" : "none";
 
   // Migration prompt: offer to encrypt an existing plaintext key.
   if (backend === BACKENDS.ENCRYPTED) {
@@ -83,6 +90,12 @@ async function loadSettings() {
   $("public-key").value = currentSettings.publicKeyArmored;
   $("auto-sign").checked = currentSettings.autoSign;
   $("native-fingerprint").value = currentSettings.fingerprint;
+  $("remote-fingerprint").value = currentSettings.fingerprint;
+  $("bunker-base-url").value = currentSettings.bunkerBaseUrl || "";
+  if (currentSettings.bunkerPairing && currentSettings.bunkerPairing.sessionId) {
+    $("bunker-status").textContent =
+      "Paired session: " + currentSettings.bunkerPairing.sessionId;
+  }
 
   setBackendRadio(currentSettings.signerBackend || BACKENDS.PLAINTEXT);
   syncBackendPanels();
@@ -177,6 +190,12 @@ async function saveSettings() {
     if (!validateFingerprint(fingerprint)) return;
     next.fingerprint = fingerprint;
     // Native backend keeps no key material in the browser.
+  } else if (backend === BACKENDS.REMOTE) {
+    const fingerprint = $("remote-fingerprint").value.trim().toUpperCase();
+    if (!validateFingerprint(fingerprint)) return;
+    next.fingerprint = fingerprint;
+    next.bunkerBaseUrl = $("bunker-base-url").value.trim();
+    // Remote backend keeps NO key material in the browser — only pairing state.
   }
 
   currentSettings = next;
@@ -276,6 +295,50 @@ async function clearAllData() {
   showStatus("All data cleared");
 }
 
+/**
+ * Create a CapAuth Bunker pairing session and render the QR.
+ *
+ * Calls POST {base}/bunker/session on the configured CapAuth service, stores the
+ * returned session id + pairing secret + relay URL in settings (so the `remote`
+ * backend can connect), and shows the QR for the phone to scan.
+ */
+async function pairBunker() {
+  const base = $("bunker-base-url").value.trim().replace(/\/+$/, "");
+  if (!base) {
+    showStatus("Set the CapAuth service base URL first", true);
+    return;
+  }
+  $("bunker-status").textContent = "Creating pairing session…";
+  try {
+    const resp = await fetch(base + "/bunker/session", { method: "POST" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+
+    // Persist pairing state into settings so the remote backend can use it.
+    currentSettings = {
+      ...currentSettings,
+      bunkerBaseUrl: base,
+      signerBackend: BACKENDS.REMOTE,
+      bunkerPairing: {
+        sessionId: data.session_id,
+        pairingSecret: data.pairing_secret,
+        relayWsUrl: data.relay_ws_url,
+      },
+    };
+    await chrome.storage.local.set({ [SETTINGS_KEY]: currentSettings });
+
+    if (data.qr_data_url) {
+      $("bunker-qr-img").src = data.qr_data_url;
+      $("bunker-qr").style.display = "block";
+    }
+    $("bunker-uri").textContent = data.pairing_uri;
+    $("bunker-status").textContent =
+      "Scan this on your phone. Session expires in " + (data.expires_in || 300) + "s.";
+  } catch (err) {
+    $("bunker-status").textContent = "Pairing failed: " + err.message;
+  }
+}
+
 function showStatus(message, isError = false) {
   const status = $("save-status");
   status.textContent = message;
@@ -301,4 +364,5 @@ document.addEventListener("DOMContentLoaded", () => {
   $("btn-clear").addEventListener("click", clearAllData);
   $("btn-migrate").addEventListener("click", migrateToEncrypted);
   $("btn-native-check").addEventListener("click", checkNativeHost);
+  $("btn-bunker-pair").addEventListener("click", pairBunker);
 });
