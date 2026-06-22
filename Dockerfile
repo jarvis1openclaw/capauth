@@ -12,6 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml MANIFEST.in README.md ./
 COPY src/ ./src/
 
+# Phone-signer PWA static assets (served at /bunker/ by the service). app.py
+# resolves these relative to the package root → /app/phone-signer.
+COPY phone-signer/ ./phone-signer/
+
 RUN pip install --no-cache-dir -e ".[service]"
 RUN pip install --no-cache-dir python-multipart>=0.0.6
 
