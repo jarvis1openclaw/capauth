@@ -104,7 +104,7 @@ export function startSigner({
       onStatus("signed");
     } catch (err) {
       send({ type: "reject", id: msg.id, reason: "sign_error: " + err.message });
-      onStatus("sign_error");
+      onStatus("sign_error: " + err.message);
     }
   }
 

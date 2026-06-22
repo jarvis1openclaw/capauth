@@ -20,10 +20,48 @@ const STORE_KEY = "capauth_bunker_envelope";
 const FP_KEY = "capauth_bunker_fp";
 
 const session = {
-  armoredKey: null, // decrypted, in-memory only
+  armoredKey: null, // decrypted (from vault) armored key, in-memory only
+  signingKey: null, // openpgp PrivateKey object, fully DECRYPTED + ready to sign
   fingerprint: "",
   signerHandle: null,
 };
+
+/**
+ * Return an OpenPGP PrivateKey object that is fully DECRYPTED and ready to
+ * sign. OpenPGP.js returns a *locked* key for passphrase-protected material;
+ * `openpgp.sign` throws on a locked key — so we must decryptKey() first. We try
+ * the no-passphrase case, then the vault passphrase (common: one passphrase for
+ * both), then prompt for the PGP passphrase as a last resort.
+ *
+ * @param {string} armored - the recovered armored private key
+ * @param {string} candidatePass - the vault passphrase (reused as a candidate)
+ * @returns {Promise<Object>} decrypted PrivateKey, ready for openpgp.sign
+ */
+async function prepareSigningKey(armored, candidatePass) {
+  const key = await openpgp.readPrivateKey({ armoredKey: armored });
+  if (key.isDecrypted()) return key;
+  const tries = ["", candidatePass].filter((v, i, a) => a.indexOf(v) === i);
+  for (const p of tries) {
+    try {
+      return await openpgp.decryptKey({ privateKey: key, passphrase: p });
+    } catch {
+      /* try next candidate */
+    }
+  }
+  // Last resort: the key has its own PGP passphrase distinct from the vault.
+  const entered =
+    typeof prompt === "function"
+      ? prompt("This key has a PGP passphrase. Enter it to enable signing:")
+      : "";
+  if (entered) {
+    try {
+      return await openpgp.decryptKey({ privateKey: key, passphrase: entered });
+    } catch {
+      /* fall through to the error */
+    }
+  }
+  throw new Error("PGP key passphrase required — could not unlock the key for signing");
+}
 
 // --- tiny DOM helpers -------------------------------------------------------
 const $ = (id) => document.getElementById(id);
@@ -70,8 +108,12 @@ async function unlockKey() {
     if (!isEncryptedEnvelope(envelope)) throw new Error("corrupt envelope");
     session.armoredKey = await decryptPrivateKey(envelope, pass);
     session.fingerprint = await fingerprintOf(session.armoredKey);
+    // Pre-decrypt the signing key NOW so a passphrase problem surfaces here,
+    // not silently at approve-time. This is the bug that made the green button
+    // appear to "do nothing": signing a locked key throws.
+    session.signingKey = await prepareSigningKey(session.armoredKey, pass);
     $("unlock-pass").value = "";
-    setStatus($("key-status"), "Unlocked. Ready to pair.", "ok");
+    setStatus($("key-status"), "Unlocked + key ready to sign. Ready to pair.", "ok");
     setStatus($("pair-status"), "Ready — paste the desktop's Bunker URI.");
     $("btn-pair").disabled = false;
   } catch (err) {
@@ -83,6 +125,7 @@ function forgetKey() {
   localStorage.removeItem(STORE_KEY);
   localStorage.removeItem(FP_KEY);
   session.armoredKey = null;
+  session.signingKey = null;
   session.fingerprint = "";
   renderKeyState();
   setStatus($("key-status"), "Key forgotten.", "");
@@ -133,7 +176,10 @@ function connect() {
     getFingerprint: () => session.fingerprint,
     requestApproval: showApproval,
     sign: async (canonicalPayload) => {
-      const privateKey = await openpgp.readPrivateKey({ armoredKey: session.armoredKey });
+      // Use the key decrypted at unlock; fall back to (re)preparing it.
+      const privateKey =
+        session.signingKey ||
+        (session.signingKey = await prepareSigningKey(session.armoredKey, ""));
       const signature = await openpgp.sign({
         message: await openpgp.createMessage({ text: canonicalPayload }),
         signingKeys: privateKey,
@@ -151,8 +197,16 @@ function connect() {
         closed: ["Connection closed.", ""],
         error: ["Relay error.", "err"],
       };
-      const e = map[s] || (s.startsWith("error:") ? ["Broker: " + s.slice(6), "err"] : null);
-      if (e) setStatus($("pair-status"), e[0], e[1]);
+      let e = map[s];
+      if (!e) {
+        if (s.startsWith("error:")) e = ["Broker: " + s.slice(6), "err"];
+        else if (s.startsWith("sign_error"))
+          e = ["Signing failed: " + s.slice(s.indexOf(":") + 1).trim(), "err"];
+        // Surface ANYTHING else rather than silently dropping it — a swallowed
+        // status is what made signing failures look like "nothing happened".
+        else e = [s, "err"];
+      }
+      setStatus($("pair-status"), e[0], e[1]);
     },
   });
 }
