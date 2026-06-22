@@ -244,3 +244,26 @@ real and tested. The following are intentionally **not** production-hardened:
 | `src/capauth/service/app.py` | Mounts the router at `/oidc` + root discovery alias. |
 | `tests/test_oidc_idp.py` | Unit tests (discovery/JWKS/PKCE/code flow, PGP mocked). |
 | `tests/test_oidc_idp_e2e.py` | E2E with a real generated PGP key (no crypto mocked). |
+
+## Passkey (WebAuthn) front-door — convenience tier
+
+A passkey is an **additive, phishing-resistant authenticator bound to an
+existing PGP fingerprint — not a new identity.** The sovereign PGP key stays the
+root of trust; the passkey is easy-mode.
+
+- **Register (PGP-gated):** `POST /oidc/passkey/register/begin` verifies a PGP
+  signature for the fingerprint, then returns WebAuthn creation options + a
+  binding ticket; `POST /oidc/passkey/register/complete` stores the credential.
+  A passkey can only be created for a key you can sign with. Enrollment page:
+  `GET /oidc/passkey/enroll`.
+- **Login:** `POST /oidc/passkey/login/begin` (with the OIDC `request_id`) →
+  `POST /oidc/passkey/login/complete` verifies the assertion, requires the
+  resolved fingerprint to be an approved CapAuth identity, and mints the SAME
+  authorization code/identity (`sub` = fingerprint) with **`amr=["webauthn"]`**
+  (vs `["pgp"]`) so relying parties can tell the tier. A "🔑 Sign in with a
+  passkey" button sits on `/oidc/authorize`; browser helpers at `/oidc/passkey.js`.
+- **Store:** `oidc/passkey.py` `PasskeyStore` — persisted credentials (keyed by
+  credential id → fingerprint + public key + sign count), in-memory ceremony
+  challenges. RP id/origin derive from the issuer. Dep: `webauthn` (capauth[service]).
+- **Verified:** full register→login ceremony in Python (soft-webauthn) AND live
+  in a browser with a virtual authenticator → a passkey login minted an OIDC code.
