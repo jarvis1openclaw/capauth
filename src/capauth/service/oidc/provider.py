@@ -182,9 +182,9 @@ _LOGIN_PAGE = """<!DOCTYPE html>
   </p>
 </div>
 
-<script src="{base_url}/oidc/passkey.js"></script>
+<script src="{base_url}/oidc/passkey.js?v=15"></script>
 <script src="{base_url}/bunker/vendor/openpgp.min.js"></script>
-<script type="module" src="{base_url}/oidc/bunker-login.js"></script>
+<script type="module" src="{base_url}/oidc/bunker-login.js?v=15"></script>
 <script>
 const BASE = "{base_url}";
 const REQUEST_ID = "{request_id}";
@@ -844,17 +844,19 @@ def build_oidc_router(
     async def passkey_enroll() -> Any:
         return HTMLResponse(content=_ENROLL_PAGE.format(base_url=issuer_url()))
 
+    _JS_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
     @router.get("/passkey.js", summary="Passkey (WebAuthn) browser helpers")
     async def passkey_js() -> Any:
         from fastapi.responses import Response
 
-        return Response(content=_PASSKEY_JS, media_type="application/javascript")
+        return Response(content=_PASSKEY_JS, media_type="application/javascript", headers=_JS_NO_CACHE)
 
     @router.get("/bunker-login.js", summary="Sign-in-with-your-phone (bunker) helper")
     async def bunker_login_js() -> Any:
         from fastapi.responses import Response
 
-        return Response(content=_BUNKER_LOGIN_JS, media_type="application/javascript")
+        return Response(content=_BUNKER_LOGIN_JS, media_type="application/javascript", headers=_JS_NO_CACHE)
 
     # ------------------------------------------------------------------
     # Token endpoint
