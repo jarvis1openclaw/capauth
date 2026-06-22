@@ -417,6 +417,37 @@ import { decryptPrivateKey, isEncryptedEnvelope } from "/bunker/lib/keyvault.js"
     } catch (e) { err("Sign on this device: " + e.message); }
   };
 
+  // Produce a PGP proof {fingerprint, nonce, nonce_signature} from the local
+  // bunker key — used by the passkey ENROLL page so you can prove your key with
+  // "sign on this device" instead of pasting a signature. Throws on no-key/cancel.
+  window.capauthLocalProof = async function (base) {
+    base = base || window._capauthBase;
+    const fp = (localStorage.getItem("capauth_bunker_fp") || "").toUpperCase();
+    const raw = localStorage.getItem("capauth_bunker_envelope");
+    if (!fp || !raw) throw new Error("No key on this device — open /bunker/, load your key, then come back.");
+    if (!window.openpgp) throw new Error("OpenPGP not loaded — reload the page.");
+    const env = JSON.parse(raw);
+    if (!isEncryptedEnvelope(env)) throw new Error("Stored key is not a valid vault envelope.");
+    const pass = prompt("Vault passphrase (to unlock your key on this device):");
+    if (!pass) throw new Error("cancelled");
+    const armored = await decryptPrivateKey(env, pass);
+    let pk = await window.openpgp.readPrivateKey({ armoredKey: armored });
+    if (!pk.isDecrypted()) {
+      try { pk = await window.openpgp.decryptKey({ privateKey: pk, passphrase: pass }); }
+      catch (e) { pk = await window.openpgp.decryptKey({ privateKey: pk, passphrase: "" }); }
+    }
+    const ch = await loadChallengeFor(base, fp);
+    const canonical = [
+      "CAPAUTH_NONCE_V1", "nonce=" + ch.nonce, "client_nonce=" + ch.client_nonce_echo,
+      "timestamp=" + ch.timestamp, "service=" + ch.service, "expires=" + ch.expires,
+    ].join("\n");
+    const sig = await window.openpgp.sign({
+      message: await window.openpgp.createMessage({ text: canonical }),
+      signingKeys: pk, detached: true,
+    });
+    return { fingerprint: fp, nonce: ch.nonce, nonce_signature: sig };
+  };
+
   window.capauthPhoneLogin = async function () {
     const base = window._capauthBase, reqId = window._capauthReqId, ch = window._capauthCh;
     const fp = ($("fp").value || "").trim().toUpperCase().replace(/\s/g, "");
@@ -511,6 +542,12 @@ _ENROLL_PAGE = """<!DOCTYPE html>
      your sovereign PGP identity. Prove your fingerprint with PGP once, then create a passkey for it.
      (Convenience tier — your PGP key stays the root of trust.)</p>
 
+  <button id="ld-enroll" onclick="enrollLocal()" style="background:#10b981">📱 Sign on THIS device &amp; create passkey</button>
+  <p class="sub" style="font-size:.74rem;margin:.4rem 0 0">Uses the key in your bunker on this device (asks your vault passphrase). Easiest — do this in your normal browser, then your passkey works in the Nextcloud app.</p>
+  <div style="display:flex;align-items:center;gap:.6rem;margin:1.1rem 0 .2rem;color:#475569;font-size:.72rem">
+    <span style="flex:1;height:1px;background:#334155"></span>OR sign manually (advanced)<span style="flex:1;height:1px;background:#334155"></span>
+  </div>
+
   <div class="step">1 — Your PGP fingerprint</div>
   <input id="fp" maxlength="50" placeholder="ABCDEF0123..." autocomplete="off"/>
   <div class="step">2 — Challenge</div>
@@ -522,10 +559,23 @@ _ENROLL_PAGE = """<!DOCTYPE html>
   <div class="msg" id="msg"></div>
 </div>
 <script src="{base_url}/oidc/passkey.js"></script>
+<script src="{base_url}/bunker/vendor/openpgp.min.js"></script>
+<script type="module" src="{base_url}/oidc/bunker-login.js?v=15"></script>
 <script>
 const BASE="{base_url}";
+window._capauthBase = BASE;
 let currentNonce=null;
 function msg(t,ok){{ const e=document.getElementById("msg"); e.textContent=t; e.className="msg "+(ok?"ok":"err"); }}
+async function enrollLocal(){{
+  if(!window.capauthWebAuthn||!window.capauthWebAuthn.available()) return msg("This browser has no passkey support.",false);
+  if(!window.capauthLocalProof) return msg("Still loading — try again in a second.",false);
+  msg("Unlocking your key + creating passkey…",true);
+  try{{
+    const proof=await window.capauthLocalProof(BASE);
+    const res=await window.capauthWebAuthn.enroll(BASE,proof);
+    msg("✅ Passkey created for "+res.fingerprint.slice(0,8)+"… — now sign in with it in the Nextcloud app.",true);
+  }}catch(e){{ msg("Failed: "+e.message,false); }}
+}}
 async function loadChallenge(fp){{
   const r=await fetch(BASE+"/capauth/v1/challenge",{{method:"POST",headers:{{"Content-Type":"application/json"}},
     body:JSON.stringify({{capauth_version:"1.0",fingerprint:fp,
