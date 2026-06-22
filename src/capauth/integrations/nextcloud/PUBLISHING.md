@@ -18,8 +18,8 @@ All paths below are relative to this app directory:
 
 | # | Step | State |
 |---|------|-------|
-| 0 | App Store account `chefboyrdave21` (sso `chefboyrdave2.1@gmail.com`, acct `chefboyrdave2.1@douno.it`) | ✅ exists |
-| 0 | App Store **API token** | ✅ **VERIFIED WORKING** — no-token POST→401, token POST→400 "download/signature required" (authenticated). Token stored as a secret; rotate after first use. |
+| 0 | App Store account **`chefboyrdave2.1`** (sso + acct email both `chefboyrdave2.1@gmail.com`) — standalone account, gmail-backed (douno.it mail was offline) | ✅ exists |
+| 0 | App Store **API token** | ✅ **VERIFIED WORKING 2026-06-22** — no-token POST→401, token POST→400 "download/signature required" (authenticated). Token is a secret; rotate after first use. |
 | 1a | Code-signing keypair + CSR (`certificates/capauth.{key,csr}`, CN=`capauth`) | ✅ done; key gitignored, CSR tracked |
 | — | App id `capauth` free on the store | ✅ confirmed (not in the 394 NC30 apps) |
 | 2 | `info.xml` (v0.3.0, AGPL-3.0-or-later, security+integration, NC 27–34) | ✅ **validates vs the live App Store XSD** |
