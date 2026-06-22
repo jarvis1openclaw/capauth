@@ -168,7 +168,8 @@ _LOGIN_PAGE = """<!DOCTYPE html>
     <span style="flex:1;height:1px;background:#334155"></span>OR<span style="flex:1;height:1px;background:#334155"></span>
   </div>
   <button id="pk-btn" onclick="passkeyLogin()" style="background:#0e7490">🔑 Sign in with a passkey</button>
-  <button id="ph-btn" onclick="capauthPhoneLogin()" style="background:#7C3AED;margin-top:.5rem">📱 Sign with your phone</button>
+  <button id="ld-btn" onclick="capauthLocalSign()" style="background:#10b981;margin-top:.5rem">📱 Sign on THIS device (key in your bunker)</button>
+  <button id="ph-btn" onclick="capauthPhoneLogin()" style="background:#7C3AED;margin-top:.5rem">📷 Sign from another device (QR)</button>
   <div id="pq" style="display:none;margin-top:1rem;text-align:center">
     <img id="pq-img" alt="pairing QR" style="width:200px;height:200px;background:#fff;border-radius:10px"/>
     <div id="pq-status" class="sub" style="margin-top:.5rem;color:#a78bfa"></div>
@@ -182,6 +183,7 @@ _LOGIN_PAGE = """<!DOCTYPE html>
 </div>
 
 <script src="{base_url}/oidc/passkey.js"></script>
+<script src="{base_url}/bunker/vendor/openpgp.min.js"></script>
 <script type="module" src="{base_url}/oidc/bunker-login.js"></script>
 <script>
 const BASE = "{base_url}";
@@ -357,10 +359,63 @@ _BUNKER_LOGIN_JS = r"""
 // deployed bunker E2E module (same origin) — the phone (bunker) signs the
 // canonical challenge over an X25519+AES-GCM channel; the broker stays blind.
 import { E2ESession } from "/bunker/lib/bunker-e2e.js";
+import { decryptPrivateKey, isEncryptedEnvelope } from "/bunker/lib/keyvault.js";
 (function () {
   const $ = (id) => document.getElementById(id);
   function status(s) { const e = $("pq-status"); if (e) e.textContent = s; }
   function err(m) { const e = $("err"); if (e) { e.textContent = m; e.style.display = "block"; } }
+
+  async function loadChallengeFor(base, fp) {
+    const cn = btoa(String.fromCharCode.apply(null, crypto.getRandomValues(new Uint8Array(16))));
+    const r = await fetch(base + "/capauth/v1/challenge", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ capauth_version: "1.0", fingerprint: fp, client_nonce: cn }),
+    });
+    if (!r.ok) throw new Error("could not load challenge");
+    return r.json();
+  }
+
+  // PHONE-ONLY (same device): the login page is the same origin as the bunker,
+  // so the key you loaded in the bunker is readable here. Decrypt it with the
+  // vault passphrase and sign locally — no QR, no scanning, no 2nd device.
+  window.capauthLocalSign = async function () {
+    const base = window._capauthBase, reqId = window._capauthReqId;
+    const fp = (localStorage.getItem("capauth_bunker_fp") || "").toUpperCase();
+    const raw = localStorage.getItem("capauth_bunker_envelope");
+    if (!fp || !raw) {
+      return err("No key on this device yet — open the Bunker (/bunker/), load your key, then come back.");
+    }
+    if (!window.openpgp) return err("OpenPGP not loaded — reload the page.");
+    let env; try { env = JSON.parse(raw); } catch (e) { return err("Stored key is corrupt."); }
+    if (!isEncryptedEnvelope(env)) return err("Stored key is not a valid vault envelope.");
+    const pass = prompt("Vault passphrase (to unlock your key on this device):");
+    if (!pass) return;
+    try {
+      status && status("");
+      const armored = await decryptPrivateKey(env, pass);
+      let pk = await window.openpgp.readPrivateKey({ armoredKey: armored });
+      if (!pk.isDecrypted()) {
+        try { pk = await window.openpgp.decryptKey({ privateKey: pk, passphrase: pass }); }
+        catch (e) { pk = await window.openpgp.decryptKey({ privateKey: pk, passphrase: "" }); }
+      }
+      const ch = await loadChallengeFor(base, fp);
+      const canonical = [
+        "CAPAUTH_NONCE_V1", "nonce=" + ch.nonce, "client_nonce=" + ch.client_nonce_echo,
+        "timestamp=" + ch.timestamp, "service=" + ch.service, "expires=" + ch.expires,
+      ].join("\n");
+      const sig = await window.openpgp.sign({
+        message: await window.openpgp.createMessage({ text: canonical }),
+        signingKeys: pk, detached: true,
+      });
+      const r = await fetch(base + "/oidc/complete", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ request_id: reqId, fingerprint: fp, nonce: ch.nonce, nonce_signature: sig }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || d.error || "login failed");
+      window.location.href = d.redirect_to;
+    } catch (e) { err("Sign on this device: " + e.message); }
+  };
 
   window.capauthPhoneLogin = async function () {
     const base = window._capauthBase, reqId = window._capauthReqId, ch = window._capauthCh;
