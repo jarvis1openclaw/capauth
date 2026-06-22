@@ -115,7 +115,7 @@
       </details>
       <label>Key passphrase (PGP) — optional</label>
       <input id="pgp-pass" type="password" autocomplete="off" />
-      <div class="hint">Only if your PGP key itself has a passphrase (the one GPG asks for when you sign). Leave blank if it doesn't.</div>
+      <div class="hint">If your key has a PGP passphrase (the long one from your keyring), enter it here <em>once</em>. The bunker strips it and re-protects the key with just your Vault passphrase below — so from then on you only ever type the Vault passphrase. Leave blank if your key has no passphrase.</div>
       <label>Vault passphrase (encrypts the key on this phone)</label>
       <input id="vault-pass" type="password" autocomplete="off" />
       <div class="hint">A passphrase that encrypts the key <em>at rest on this phone</em> (PBKDF2 → AES-GCM). You'll re-enter it to Unlock. Can be the same as the PGP one.</div>

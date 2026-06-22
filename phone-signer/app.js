@@ -86,7 +86,25 @@ async function storeKey() {
     // Validate it's a real (private) key + capture fingerprint.
     const priv = await openpgp.readPrivateKey({ armoredKey: armored });
     const fp = priv.getFingerprint().toUpperCase();
-    const envelope = await encryptPrivateKey(armored, vaultPass);
+    // If the key has its OWN (PGP) passphrase, strip it now — decrypt with the
+    // PGP passphrase once and store the PASSPHRASELESS key inside the vault. The
+    // vault passphrase (PBKDF2→AES-GCM) is then the only protection, so you
+    // never have to type the long PGP passphrase again (just the vault one).
+    let toStore = armored;
+    if (!priv.isDecrypted()) {
+      const pgpPass = $("pgp-pass").value;
+      if (!pgpPass) {
+        return setStatus($("key-status"),
+          "This key has a PGP passphrase. Enter it in the 'Key passphrase (PGP)' box — I'll store the key under just your vault passphrase so you never need the long one again.", "err");
+      }
+      try {
+        const dec = await openpgp.decryptKey({ privateKey: priv, passphrase: pgpPass });
+        toStore = dec.armor();
+      } catch (e) {
+        return setStatus($("key-status"), "Wrong PGP key passphrase — couldn't unlock the key.", "err");
+      }
+    }
+    const envelope = await encryptPrivateKey(toStore, vaultPass);
     localStorage.setItem(STORE_KEY, JSON.stringify(envelope));
     localStorage.setItem(FP_KEY, fp);
     $("priv-key").value = "";
