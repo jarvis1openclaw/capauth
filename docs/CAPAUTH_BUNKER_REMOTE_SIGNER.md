@@ -99,8 +99,9 @@ Prereqs: the CapAuth service running (locally: `capauth-service`, or the
 deployed `capauth-skstack41.skworld.io`).
 
 1. **Serve the PWA** — it's served by the service at `/bunker/`
-   (e.g. `https://capauth-skstack41.skworld.io/bunker/`). For OpenPGP.js the
-   spike loads it from a CDN (vendor it locally for production — see hardening).
+   (e.g. `https://capauth-skstack41.skworld.io/bunker/`). OpenPGP.js is vendored
+   locally at `phone-signer/vendor/openpgp.min.js` (no CDN dependency; precached
+   by the service worker, served with a long immutable cache).
 
 2. **Phone — load the key:** open `/bunker/` on the phone, paste your armored
    PGP private key, set a *vault passphrase* (encrypts the key at rest on the
@@ -201,7 +202,7 @@ cannot read the canonical payload or the signature.
    the PWA is backgrounded (today it must be open + connected).
 6. **Funnel deployment.** Wire `tailscale funnel` on the service host, set
    `CAPAUTH_BUNKER_HOST` to the Funnel hostname, document the systemd unit.
-7. **Vendor OpenPGP.js** into `phone-signer/` (sovereignty — no CDN dependency)
+7. ~~**Vendor OpenPGP.js**~~ — DONE (`phone-signer/vendor/openpgp.min.js`, v5.11.3)
    and add it to the service-worker precache.
 8. **Pairing-secret hygiene.** One-time-use pairing secrets; rotate on each
    `paired`; bind the secret to a single signer socket.

@@ -1449,4 +1449,12 @@ async def phone_signer_asset(asset: str) -> Any:
         raise HTTPException(status_code=403, detail="forbidden")
     if not target.is_file():
         raise HTTPException(status_code=404, detail="not found")
-    return FileResponse(str(target), headers=_PWA_NO_CACHE)
+    # Vendored third-party libs (e.g. openpgp.min.js) are content-stable + large
+    # — cache them long so the 540KB OpenPGP bundle isn't refetched every load.
+    # App code stays no-cache so fixes always propagate.
+    headers = (
+        {"Cache-Control": "public, max-age=604800, immutable"}
+        if asset.startswith("vendor/")
+        else _PWA_NO_CACHE
+    )
+    return FileResponse(str(target), headers=headers)

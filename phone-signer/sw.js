@@ -2,19 +2,20 @@
  * CapAuth Bunker phone-signer — service worker (SPIKE).
  *
  * Minimal app-shell cache so the PWA is installable + works offline for the
- * key-management UI. The WebSocket relay obviously needs the network. We do NOT
- * cache OpenPGP.js from the CDN here (sovereignty follow-up: vendor it locally
- * and add it to the precache list).
+ * key-management UI. The WebSocket relay obviously needs the network. OpenPGP.js
+ * is vendored locally (vendor/openpgp.min.js) and precached — no CDN dependency.
  */
-const CACHE = "capauth-bunker-v2";
+const CACHE = "capauth-bunker-v3";
 const SHELL = [
   "./",
   "./index.html",
   "./app.js",
   "./manifest.webmanifest",
+  "./vendor/openpgp.min.js",
   "./lib/keyvault.js",
   "./lib/canonical.js",
   "./lib/bunker-signer.js",
+  "./lib/bunker-e2e.js",
 ];
 
 self.addEventListener("install", (e) => {
