@@ -47,6 +47,14 @@
     .row button { margin-top:0; }
     .status { font-size:12px; color:var(--muted); margin-top:12px; min-height:16px; }
     .status.ok { color:var(--ok); } .status.err { color:var(--err); }
+    .hint { font-size:11px; color:var(--muted); margin:6px 0 2px; line-height:1.6; }
+    .hint code {
+      background:rgba(124,58,237,.12); border:1px solid rgba(124,58,237,.3);
+      border-radius:5px; padding:1px 6px; color:var(--accent2);
+      font-size:10px; word-break:break-all; user-select:all; -webkit-user-select:all;
+      display:inline-block; margin:1px 0;
+    }
+    details.hint summary { cursor:pointer; color:var(--accent2); }
     .pill { display:inline-block; background:rgba(124,58,237,.15); border:1px solid rgba(124,58,237,.4);
       border-radius:999px; padding:3px 10px; font-size:11px; color:var(--accent2); }
     .fp { font-family:monospace; color:var(--cyan); font-size:11px; word-break:break-all; }
@@ -90,10 +98,21 @@
     <div id="key-import">
       <label>Armored PGP private key</label>
       <textarea id="priv-key" placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----"></textarea>
+      <details class="hint">
+        <summary>How do I get this from my computer?</summary>
+        On your computer's terminal:<br />
+        1 · list your keys → <code>gpg --list-secret-keys --keyid-format=long</code><br />
+        2 · export the private key → <code>gpg --armor --export-secret-keys YOUR_KEY_ID</code><br />
+        Copy the whole <code>BEGIN…END PGP PRIVATE KEY BLOCK</code> and paste it above.<br />
+        <span style="color:var(--accent2)">The service needs your <em>public</em> key registered too:</span>
+        <code>gpg --armor --export YOUR_KEY_ID</code>
+      </details>
       <label>Key passphrase (PGP) — optional</label>
       <input id="pgp-pass" type="password" autocomplete="off" />
+      <div class="hint">Only if your PGP key itself has a passphrase (the one GPG asks for when you sign). Leave blank if it doesn't.</div>
       <label>Vault passphrase (encrypts the key on this phone)</label>
       <input id="vault-pass" type="password" autocomplete="off" />
+      <div class="hint">A passphrase that encrypts the key <em>at rest on this phone</em> (PBKDF2 → AES-GCM). You'll re-enter it to Unlock. Can be the same as the PGP one.</div>
       <button id="btn-store">Encrypt &amp; store on this phone</button>
     </div>
     <div id="key-unlock" class="hidden">
@@ -112,6 +131,7 @@
     <h2>2 · Pair with desktop</h2>
     <label>Bunker URI (scan QR or paste)</label>
     <input id="bunker-uri" placeholder="capauth-bunker://host/session?key=..." />
+    <div class="hint">When you start a login on your computer it shows a QR / <code>capauth-bunker://…</code> link. Scan or paste it here, then Connect — this phone signs the login request.</div>
     <button id="btn-pair" disabled>Connect</button>
     <div id="pair-status" class="status">Load + unlock a key first.</div>
   </section>
