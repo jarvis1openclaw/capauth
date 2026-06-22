@@ -31,6 +31,7 @@
 
 import { signMessage, extractFingerprint } from "./openpgp-bundle.js";
 import { decryptPrivateKey, isEncryptedEnvelope } from "./keyvault.js";
+import { E2ESession } from "./bunker-e2e.js";
 
 export const SIGNER_BACKENDS = Object.freeze({
   LOCAL_PLAINTEXT: "local-plaintext",
@@ -391,6 +392,10 @@ export class RemoteBunkerBackend {
   _defaultRelay(request) {
     return new Promise((resolve, reject) => {
       let settled = false;
+      // E2E channel: on pair we exchange ephemeral X25519 pubkeys (kex), then
+      // send the sign_request AES-GCM-sealed (enc). The broker relays only
+      // kex + enc and never sees the canonical payload or the signature.
+      const e2e = new E2ESession(this.pairingSecret);
       const url =
         `${this.relayWsUrl}?session=${encodeURIComponent(this.sessionId)}` +
         `&role=client&key=${encodeURIComponent(this.pairingSecret)}`;
@@ -416,25 +421,47 @@ export class RemoteBunkerBackend {
         return finish(reject, new Error(`Cannot connect to bunker relay: ${err.message}`));
       }
       let sent = false;
-      ws.onmessage = (evt) => {
+      ws.onmessage = async (evt) => {
         let msg;
         try {
           msg = JSON.parse(evt.data);
         } catch {
           return;
         }
-        if (msg.type === "paired" && !sent) {
-          sent = true;
-          ws.send(JSON.stringify(request));
-          return;
-        }
-        if (
-          (msg.type === "sign_response" || msg.type === "reject") &&
-          msg.id === request.id
-        ) {
-          finish(resolve, msg);
-        } else if (msg.type === "error") {
-          finish(resolve, msg);
+        try {
+          if (msg.type === "paired") {
+            ws.send(JSON.stringify(await e2e.start())); // our kex pubkey
+            return;
+          }
+          if (msg.type === "kex") {
+            await e2e.onKex(msg.pub); // derive shared key
+            if (!sent) {
+              sent = true;
+              ws.send(JSON.stringify(await e2e.seal(request))); // encrypted sign_request
+            }
+            return;
+          }
+          if (msg.type === "enc") {
+            const inner = await e2e.open(msg);
+            if (
+              (inner.type === "sign_response" || inner.type === "reject") &&
+              inner.id === request.id
+            ) {
+              finish(resolve, inner);
+            }
+            return;
+          }
+          // Legacy plaintext fallback (non-E2E signer / tests).
+          if (
+            (msg.type === "sign_response" || msg.type === "reject") &&
+            msg.id === request.id
+          ) {
+            finish(resolve, msg);
+          } else if (msg.type === "error") {
+            finish(resolve, msg);
+          }
+        } catch (err) {
+          finish(reject, new Error(`Bunker E2E error: ${err.message}`));
         }
       };
       ws.onerror = () => finish(reject, new Error("Bunker relay socket error."));

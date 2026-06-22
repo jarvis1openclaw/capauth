@@ -17,6 +17,7 @@
  */
 
 import { parseCanonical } from "./canonical.js";
+import { E2ESession } from "./bunker-e2e.js";
 
 /**
  * Run the signer loop over a WebSocket relay.
@@ -49,6 +50,11 @@ export function startSigner({
     `&role=signer&key=${encodeURIComponent(pairingSecret)}`;
   const ws = makeSocket ? makeSocket(url) : new WebSocket(url);
 
+  // E2E relay channel: on pairing both peers exchange ephemeral X25519 pubkeys
+  // (kex) and AES-GCM-seal every sensitive message (enc). The broker only ever
+  // relays kex + enc — it cannot read the canonical payload or the signature.
+  const e2e = new E2ESession(pairingSecret);
+
   ws.onopen = () => onStatus("connected");
   ws.onclose = () => onStatus("closed");
   ws.onerror = () => onStatus("error");
@@ -62,6 +68,29 @@ export function startSigner({
     }
     if (msg.type === "paired") {
       onStatus("paired");
+      try {
+        send(await e2e.start()); // send our kex pubkey
+      } catch (err) {
+        onStatus("error:kex_" + err.message);
+      }
+      return;
+    }
+    if (msg.type === "kex") {
+      try {
+        await e2e.onKex(msg.pub);
+        onStatus("secured");
+      } catch (err) {
+        onStatus("error:kex_" + err.message);
+      }
+      return;
+    }
+    if (msg.type === "enc") {
+      try {
+        const inner = await e2e.open(msg);
+        if (inner.type === "sign_request") await handleSignRequest(inner);
+      } catch (err) {
+        onStatus("error:decrypt_" + err.message);
+      }
       return;
     }
     if (msg.type === "peer_left") {
@@ -73,6 +102,7 @@ export function startSigner({
       return;
     }
     if (msg.type === "sign_request") {
+      // Legacy plaintext path (no E2E channel) — kept for non-E2E peers/tests.
       await handleSignRequest(msg);
     }
   };
@@ -88,14 +118,14 @@ export function startSigner({
       fields,
     });
     if (!approved) {
-      send({ type: "reject", id: msg.id, reason: "user_declined" });
+      await reply({ type: "reject", id: msg.id, reason: "user_declined" });
       onStatus("rejected");
       return;
     }
     try {
       // Sign the EXACT relayed canonical bytes (the load-bearing contract).
       const signature = await sign(msg.payload);
-      send({
+      await reply({
         type: "sign_response",
         id: msg.id,
         signature,
@@ -103,9 +133,15 @@ export function startSigner({
       });
       onStatus("signed");
     } catch (err) {
-      send({ type: "reject", id: msg.id, reason: "sign_error: " + err.message });
+      await reply({ type: "reject", id: msg.id, reason: "sign_error: " + err.message });
       onStatus("sign_error: " + err.message);
     }
+  }
+
+  // Reply over the E2E channel when secured (broker can't read it); fall back to
+  // plaintext for a legacy/non-E2E peer.
+  async function reply(obj) {
+    send(e2e.isSecure ? await e2e.seal(obj) : obj);
   }
 
   function send(obj) {

@@ -50,10 +50,16 @@ Relayed (client <-> signer, broker is pass-through):
       {"type": "sign_response", "id": "<req-id>", "signature": "<armored>",
        "fingerprint": "<fp that signed>"}
 
+E2E-encryption (DONE — see bunker_e2e.py): the client + signer perform an
+ephemeral X25519 ``kex`` over the relay and AES-256-GCM ``enc`` every sensitive
+message, so the broker only relays ``kex`` + ``enc`` and CANNOT read the
+``sign_request`` payload or the returned signature. Defeats a passive /
+honest-but-curious broker (and log/memory/3rd-party-relay leakage); see the
+honest threat-model note in bunker_e2e.py for the active-MITM caveat.
+
 SPIKE scope / hardening follow-ups (documented, NOT done here):
-* The relay is plaintext app-layer (TLS terminates at the funnel/ingress). The
-  hardening step is to **E2E-encrypt** the relayed ``payload``/``signature`` so
-  the broker process cannot read them (X25519 ECDH from the pairing secret).
+* Active-MITM resistance vs the broker itself (a secret the broker never sees,
+  e.g. a client key fragment carried only in the QR).
 * No replay/nonce protection on the bunker protocol itself (the CapAuth nonce
   TTL is the only guard today).
 * No broker auth / rate-limit beyond the pairing secret + session expiry.
@@ -234,8 +240,13 @@ class BunkerBroker:
 
 
 # Messages the broker will relay client<->signer (pass-through, opaque payload).
+# ``kex`` carries an ephemeral X25519 public key; ``enc`` carries an AES-GCM
+# sealed envelope (see bunker_e2e.py). With E2E on, the broker only ever sees
+# kex + enc — the sign_request payload and the signature are unreadable to it.
+# The plaintext sign_* types remain relayable for the legacy / non-E2E path and
+# the test harness.
 _RELAYED_TYPES = frozenset(
-    {"sign_request", "sign_response", "approve", "reject"}
+    {"sign_request", "sign_response", "approve", "reject", "kex", "enc"}
 )
 
 

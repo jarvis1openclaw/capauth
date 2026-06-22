@@ -1,0 +1,18 @@
+{
+  "_comment": "Shared cross-impl test vector for the CapAuth Bunker relay E2E-encryption (capauth-bunker-e2e-v1). Python (cryptography) and JS (WebCrypto) tests read THIS file and assert byte-identical key derivation + AEAD output. Pins the KDF/AEAD parameters so the broker-blind channel never drifts between impls. The ECDH step (X25519) is exercised by per-language round-trip tests; this vector fixes a KNOWN shared secret so the HKDF+AES-GCM layer is deterministic and comparable. Do NOT edit expected_* without regenerating from both impls.",
+  "scheme": "capauth-bunker-e2e-v1",
+  "kdf": "HKDF-SHA256",
+  "aead": "AES-256-GCM",
+  "info": "capauth-bunker-e2e-v1",
+  "inputs": {
+    "shared_secret_hex": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+    "pairing_secret": "pairing-secret-xyz",
+    "nonce_hex": "0102030405060708090a0b0c",
+    "plaintext_utf8": "{\"type\":\"sign_request\",\"id\":\"r1\",\"payload\":\"X\"}"
+  },
+  "expected": {
+    "aes_key_hex": "dee38807993a9d9a225ff37331214837d266dafa33309d0ceec21857338bb2d5",
+    "_comment_ct": "wire ciphertext = nonce(12) || AES-GCM(ciphertext || 16-byte tag), hex-encoded",
+    "ciphertext_wire_hex": "0102030405060708090a0b0c0c22668c3190904a9e8f6aa44caae7c506f44ce337067ac4d93c9904109d650662b497632b6f1c40fc4b72de8704599000295dd2b40304cb857ea21beea7f1"
+  }
+}

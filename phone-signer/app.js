@@ -190,7 +190,8 @@ function connect() {
     onStatus: (s) => {
       const map = {
         connected: ["Connected. Waiting to pair…", ""],
-        paired: ["Paired with desktop. Awaiting sign requests…", "ok"],
+        paired: ["Paired with desktop. Securing channel…", "ok"],
+        secured: ["🔒 Encrypted channel ready. Awaiting sign requests…", "ok"],
         signed: ["Signed + returned to desktop.", "ok"],
         rejected: ["You rejected the request.", ""],
         peer_left: ["Desktop disconnected.", "err"],
