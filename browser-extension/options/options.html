@@ -320,7 +320,7 @@
     <textarea id="private-key"
               placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----&#10;&#10;Paste your armored private key here...&#10;&#10;-----END PGP PRIVATE KEY BLOCK-----"
               rows="8" spellcheck="false" autocomplete="off"></textarea>
-    <div class="field-hint">Used for signing challenge nonces. Will be replaced by OpenPGP.js key management.</div>
+    <div class="field-hint">Export with <code>gpg --armor --export-secret-keys &lt;fingerprint&gt;</code>. Signs challenge nonces locally — never sent to any page. <strong>⚠ Currently stored unencrypted in extension storage.</strong> Stronger custody (passphrase-encrypted at-rest, gpg-agent via native-messaging, or a phone remote-signer) is on the roadmap.</div>
   </div>
 
   <div class="field">
@@ -328,7 +328,7 @@
     <textarea id="public-key"
               placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----&#10;&#10;Paste your armored public key here...&#10;&#10;-----END PGP PUBLIC KEY BLOCK-----"
               rows="6" spellcheck="false" autocomplete="off"></textarea>
-    <div class="field-hint">Sent to the service on first login for key enrollment.</div>
+    <div class="field-hint">Export with <code>gpg --armor --export &lt;fingerprint&gt;</code>. Sent to the service on first login for key enrollment (public — safe to share).</div>
   </div>
 
   <!-- Behavior -->
