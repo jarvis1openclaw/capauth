@@ -18,6 +18,7 @@ steps to register CapAuth as an OAuth/OIDC Source in stock Authentik.
 from __future__ import annotations
 
 from .clients import ClientRegistry, OIDCClient
+from .passkey import PasskeyStore
 from .provider import build_oidc_router
 from .signing_key import SigningKey
 from .store import AuthCodeStore
@@ -26,6 +27,7 @@ __all__ = [
     "AuthCodeStore",
     "ClientRegistry",
     "OIDCClient",
+    "PasskeyStore",
     "SigningKey",
     "build_oidc_router",
 ]

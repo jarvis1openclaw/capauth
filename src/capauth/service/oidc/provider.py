@@ -38,6 +38,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ...authentik.claims_mapper import preferred_username_fallback
 from .clients import ClientRegistry
+from .passkey import PasskeyStore
 from .signing_key import SigningKey
 from .store import AuthCodeStore, verify_pkce
 
@@ -163,14 +164,32 @@ _LOGIN_PAGE = """<!DOCTYPE html>
   <button onclick="submitSig()">Verify &amp; Continue</button>
   <div class="err" id="err"></div>
 
+  <div style="display:flex;align-items:center;gap:.6rem;margin:1.1rem 0 .2rem;color:#475569;font-size:.74rem">
+    <span style="flex:1;height:1px;background:#334155"></span>OR<span style="flex:1;height:1px;background:#334155"></span>
+  </div>
+  <button id="pk-btn" onclick="passkeyLogin()" style="background:#0e7490">🔑 Sign in with a passkey</button>
+
   <p style="margin-top:1rem;font-size:.74rem;color:#475569">
     CLI: <code>capauth sign --nonce &lt;nonce&gt;</code> &nbsp;·&nbsp; the browser extension fills the signature automatically.
+    &nbsp;·&nbsp; <a href="{base_url}/oidc/passkey/enroll" style="color:#a78bfa">add a passkey</a>
   </p>
 </div>
 
+<script src="{base_url}/oidc/passkey.js"></script>
 <script>
 const BASE = "{base_url}";
 const REQUEST_ID = "{request_id}";
+
+async function passkeyLogin(){{
+  document.getElementById("err").style.display="none";
+  if(!window.capauthWebAuthn || !window.capauthWebAuthn.available()){{
+    return setErr("This browser has no passkey support — use PGP above.");
+  }}
+  try{{
+    const redirect = await window.capauthWebAuthn.login(BASE, REQUEST_ID);
+    window.location.href = redirect;
+  }}catch(e){{ setErr("Passkey sign-in: " + e.message); }}
+}}
 let currentNonce = null, currentEcho = null;
 
 function setErr(m){{ const e=document.getElementById("err"); e.textContent=m; e.style.display="block"; }}
@@ -232,6 +251,183 @@ async function submitSig(){{
 
 
 # ---------------------------------------------------------------------------
+# Passkey (WebAuthn) browser helpers — served as static JS so we don't have to
+# brace-escape a large script inside the .format() page templates.
+# ---------------------------------------------------------------------------
+
+_PASSKEY_JS = r"""
+// CapAuth passkey (WebAuthn) browser helpers. Convenience front-door bound to a
+// PGP fingerprint — the passkey logs into the SAME identity (amr=webauthn).
+(function () {
+  function b64urlToBuf(s) {
+    s = String(s).replace(/-/g, "+").replace(/_/g, "/");
+    s += "=".repeat((4 - (s.length % 4)) % 4);
+    const bin = atob(s), b = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+    return b.buffer;
+  }
+  function bufToB64url(buf) {
+    const b = new Uint8Array(buf); let s = "";
+    for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function parseCreation(o) {
+    const p = Object.assign({}, o);
+    p.challenge = b64urlToBuf(o.challenge);
+    p.user = Object.assign({}, o.user, { id: b64urlToBuf(o.user.id) });
+    if (o.excludeCredentials)
+      p.excludeCredentials = o.excludeCredentials.map((c) => Object.assign({}, c, { id: b64urlToBuf(c.id) }));
+    return p;
+  }
+  function parseRequest(o) {
+    const p = Object.assign({}, o);
+    p.challenge = b64urlToBuf(o.challenge);
+    if (o.allowCredentials)
+      p.allowCredentials = o.allowCredentials.map((c) => Object.assign({}, c, { id: b64urlToBuf(c.id) }));
+    return p;
+  }
+  function serializeAttestation(c) {
+    return {
+      id: c.id, rawId: bufToB64url(c.rawId), type: c.type,
+      response: {
+        attestationObject: bufToB64url(c.response.attestationObject),
+        clientDataJSON: bufToB64url(c.response.clientDataJSON),
+        transports: c.response.getTransports ? c.response.getTransports() : [],
+      },
+      clientExtensionResults: c.getClientExtensionResults ? c.getClientExtensionResults() : {},
+    };
+  }
+  function serializeAssertion(c) {
+    return {
+      id: c.id, rawId: bufToB64url(c.rawId), type: c.type,
+      response: {
+        authenticatorData: bufToB64url(c.response.authenticatorData),
+        clientDataJSON: bufToB64url(c.response.clientDataJSON),
+        signature: bufToB64url(c.response.signature),
+        userHandle: c.response.userHandle ? bufToB64url(c.response.userHandle) : null,
+      },
+      clientExtensionResults: c.getClientExtensionResults ? c.getClientExtensionResults() : {},
+    };
+  }
+  async function post(url, body) {
+    const r = await fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || d.error || ("HTTP " + r.status));
+    return d;
+  }
+
+  window.capauthWebAuthn = {
+    available() {
+      return !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.get);
+    },
+    // Passkey login for an OIDC request_id. Returns the redirect URL.
+    async login(baseUrl, requestId) {
+      const options = await post(baseUrl + "/oidc/passkey/login/begin", { request_id: requestId });
+      const assertion = await navigator.credentials.get({ publicKey: parseRequest(options) });
+      const d = await post(baseUrl + "/oidc/passkey/login/complete", {
+        request_id: requestId, credential: serializeAssertion(assertion),
+      });
+      return d.redirect_to;
+    },
+    // Register a passkey for a PGP-proven fingerprint. proof = {fingerprint, nonce, nonce_signature, public_key?}
+    async enroll(baseUrl, proof) {
+      const begin = await post(baseUrl + "/oidc/passkey/register/begin", proof);
+      const credential = await navigator.credentials.create({ publicKey: parseCreation(begin.options) });
+      return post(baseUrl + "/oidc/passkey/register/complete", {
+        ticket: begin.ticket, credential: serializeAttestation(credential),
+      });
+    },
+  };
+})();
+"""
+
+
+_ENROLL_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CapAuth — Add a passkey</title>
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:'Segoe UI',system-ui,sans-serif;background:#0f0f1a;color:#e2e8f0;
+          display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem}}
+    .card{{background:#1a1a35;border:1px solid rgba(124,58,237,.25);border-radius:14px;padding:2rem;max-width:520px;width:100%}}
+    h1{{font-size:1.3rem;color:#a78bfa;margin-bottom:.4rem}}
+    p.sub{{color:#94a3b8;font-size:.85rem;margin-bottom:1.2rem;line-height:1.5}}
+    .step{{color:#64748b;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;margin:.8rem 0 .3rem}}
+    input,textarea{{width:100%;background:#0f0f1a;border:1px solid #334155;border-radius:8px;color:#e2e8f0;
+                    padding:.6rem .8rem;font-size:.86rem;margin-bottom:.6rem;font-family:monospace}}
+    textarea{{min-height:120px;resize:vertical}}
+    button{{width:100%;background:#7C3AED;color:#fff;border:none;border-radius:8px;padding:.8rem;font-size:1rem;cursor:pointer;font-weight:600;margin-top:.4rem}}
+    .nonce-box{{background:#0f0f1a;border:1px solid #334155;border-radius:8px;padding:.6rem;font-family:monospace;font-size:.76rem;color:#00e5ff;word-break:break-all;margin-bottom:.6rem}}
+    .msg{{font-size:.85rem;margin-top:.8rem;min-height:1.1rem}}
+    .ok{{color:#34d399}} .err{{color:#f87171}}
+    code{{color:#a78bfa}}
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>🔑 Add a passkey</h1>
+  <p class="sub">A passkey is an <strong>easy, phishing-resistant</strong> way to sign in — bound to
+     your sovereign PGP identity. Prove your fingerprint with PGP once, then create a passkey for it.
+     (Convenience tier — your PGP key stays the root of trust.)</p>
+
+  <div class="step">1 — Your PGP fingerprint</div>
+  <input id="fp" maxlength="50" placeholder="ABCDEF0123..." autocomplete="off"/>
+  <div class="step">2 — Challenge</div>
+  <div class="nonce-box" id="nonce">Enter your fingerprint to load a challenge…</div>
+  <div class="step">3 — PGP signature over the challenge</div>
+  <textarea id="sig" placeholder="-----BEGIN PGP MESSAGE-----"></textarea>
+  <textarea id="pub" style="min-height:70px" placeholder="(first time) paste your public key"></textarea>
+  <button onclick="enroll()">Prove with PGP &amp; create passkey</button>
+  <div class="msg" id="msg"></div>
+</div>
+<script src="{base_url}/oidc/passkey.js"></script>
+<script>
+const BASE="{base_url}";
+let currentNonce=null;
+function msg(t,ok){{ const e=document.getElementById("msg"); e.textContent=t; e.className="msg "+(ok?"ok":"err"); }}
+async function loadChallenge(fp){{
+  const r=await fetch(BASE+"/capauth/v1/challenge",{{method:"POST",headers:{{"Content-Type":"application/json"}},
+    body:JSON.stringify({{capauth_version:"1.0",fingerprint:fp,
+      client_nonce:btoa(String.fromCharCode.apply(null,crypto.getRandomValues(new Uint8Array(16))))}})}});
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}}
+document.getElementById("fp").addEventListener("blur",async function(){{
+  const fp=this.value.trim().toUpperCase().replace(/\\s/g,"");
+  if(fp.length!==40) return;
+  try{{ const ch=await loadChallenge(fp); currentNonce=ch.nonce; document.getElementById("nonce").textContent=ch.nonce;
+    if(window.capauth&&window.capauth.isCapAuth){{ try{{ const res=await window.capauth.signChallenge(ch);
+      document.getElementById("sig").value=res.signature; }}catch(e){{}} }}
+  }}catch(e){{ document.getElementById("nonce").textContent="Error: "+e.message; }}
+}});
+async function enroll(){{
+  if(!window.capauthWebAuthn||!window.capauthWebAuthn.available()) return msg("This browser has no passkey support.",false);
+  const fp=document.getElementById("fp").value.trim().toUpperCase().replace(/\\s/g,"");
+  const sig=document.getElementById("sig").value.trim();
+  const pub=document.getElementById("pub").value.trim();
+  if(fp.length!==40) return msg("Fingerprint must be 40 hex characters.",false);
+  if(!currentNonce) return msg("Load a challenge first (tab out of the fingerprint field).",false);
+  if(!sig) return msg("Paste your PGP signature.",false);
+  msg("Verifying PGP and creating passkey…",true);
+  try{{
+    const proof={{fingerprint:fp,nonce:currentNonce,nonce_signature:sig}};
+    if(pub) proof.public_key=pub;
+    const res=await window.capauthWebAuthn.enroll(BASE,proof);
+    msg("✅ Passkey created for "+res.fingerprint.slice(0,8)+"… — you can now sign in with it.",true);
+  }}catch(e){{ msg("Failed: "+e.message,false); }}
+}}
+</script>
+</body>
+</html>
+"""
+
+
+# ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
 
@@ -241,6 +437,7 @@ def build_oidc_router(
     signing_key: Optional[SigningKey] = None,
     clients: Optional[ClientRegistry] = None,
     store: Optional[AuthCodeStore] = None,
+    passkeys: Optional[PasskeyStore] = None,
 ) -> APIRouter:
     """Build the OIDC IdP router.
 
@@ -256,12 +453,16 @@ def build_oidc_router(
     signing_key = signing_key or SigningKey()
     clients = clients if clients is not None else ClientRegistry()
     store = store or AuthCodeStore()
+    passkeys = passkeys if passkeys is not None else PasskeyStore(
+        data_dir=os.environ.get("CAPAUTH_DATA_DIR", "/data")
+    )
 
     router = APIRouter(tags=["oidc-idp"])
     # Expose internals for the main app / tests.
     router.signing_key = signing_key  # type: ignore[attr-defined]
     router.clients = clients  # type: ignore[attr-defined]
     router.store = store  # type: ignore[attr-defined]
+    router.passkeys = passkeys  # type: ignore[attr-defined]
 
     def _verify_pgp(
         fingerprint: str,
@@ -419,6 +620,101 @@ def build_oidc_router(
         return {"redirect_to": redirect_to, "code": code_record.code}
 
     # ------------------------------------------------------------------
+    # Passkey (WebAuthn) — convenience front-door bound to a PGP fingerprint
+    # ------------------------------------------------------------------
+
+    @router.post("/passkey/register/begin", summary="Begin passkey registration (PGP-gated)")
+    async def passkey_register_begin(request: Request) -> dict[str, Any]:
+        """Authorize passkey registration by verifying a PGP signature for the
+        fingerprint, then return WebAuthn creation options + a binding ticket.
+        A passkey can ONLY be registered for a fingerprint you can sign for."""
+        body = await request.json()
+        fingerprint = (body.get("fingerprint") or "").strip().upper()
+        nonce_sig = (body.get("nonce_signature") or "").strip()
+        nonce_id = (body.get("nonce") or "").strip()
+        public_key = (body.get("public_key") or "").strip()
+        if len(fingerprint) != 40 or not nonce_sig or not nonce_id:
+            raise HTTPException(status_code=400, detail="fingerprint, nonce, nonce_signature required")
+        ok, err, _claims = _verify_pgp(
+            fingerprint=fingerprint,
+            nonce=nonce_id,
+            nonce_signature=nonce_sig,
+            public_key=public_key,
+            claims={},
+            claims_signature="",
+        )
+        if not ok:
+            raise HTTPException(status_code=401, detail=err or "pgp_verification_failed")
+        ticket, options = passkeys.begin_registration(fingerprint)
+        return {"ticket": ticket, "options": options}
+
+    @router.post("/passkey/register/complete", summary="Finish passkey registration")
+    async def passkey_register_complete(request: Request) -> dict[str, Any]:
+        body = await request.json()
+        ticket = (body.get("ticket") or "").strip()
+        credential = body.get("credential")
+        if not ticket or not credential:
+            raise HTTPException(status_code=400, detail="ticket + credential required")
+        try:
+            fp, cid = passkeys.complete_registration(ticket, credential)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"registration_failed: {exc}")
+        return {"ok": True, "fingerprint": fp, "credential_id": cid}
+
+    @router.post("/passkey/login/begin", summary="Begin passkey login")
+    async def passkey_login_begin(request: Request) -> dict[str, Any]:
+        body = await request.json()
+        request_id = (body.get("request_id") or "").strip()
+        fingerprint_hint = (body.get("fingerprint") or "").strip().upper()
+        if store.get_login_request(request_id) is None:
+            raise HTTPException(status_code=400, detail="expired or unknown request")
+        return passkeys.begin_authentication(request_id, fingerprint_hint)
+
+    @router.post("/passkey/login/complete", summary="Finish passkey login -> auth code")
+    async def passkey_login_complete(request: Request) -> dict[str, Any]:
+        body = await request.json()
+        request_id = (body.get("request_id") or "").strip()
+        credential = body.get("credential")
+        login_req = store.get_login_request(request_id)
+        if login_req is None:
+            raise HTTPException(status_code=400, detail="expired or unknown request")
+        if not credential:
+            raise HTTPException(status_code=400, detail="credential required")
+        try:
+            fingerprint = passkeys.complete_authentication(request_id, credential)
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail=f"passkey_verification_failed: {exc}")
+
+        # The passkey resolves to a fingerprint; that key MUST already be an
+        # approved CapAuth identity (it was enrolled when the passkey was
+        # registered behind PGP proof). Refuse otherwise.
+        from ..app import get_keystore
+
+        existing = get_keystore().get(fingerprint)
+        if existing is None or not getattr(existing, "approved", True):
+            raise HTTPException(status_code=403, detail="fingerprint_not_approved")
+
+        login_req = store.pop_login_request(request_id)
+        claims = {"amr": ["webauthn"]}
+        code_record = store.issue_code(login_req, fingerprint, claims)
+        params = {"code": code_record.code}
+        if login_req.state:
+            params["state"] = login_req.state
+        redirect_to = f"{login_req.redirect_uri}?{urlencode(params)}"
+        logger.info("OIDC code issued (passkey) for fp=%s client=%s", fingerprint[:8], login_req.client_id)
+        return {"redirect_to": redirect_to, "code": code_record.code}
+
+    @router.get("/passkey/enroll", summary="Passkey enrollment page (PGP-gated)")
+    async def passkey_enroll() -> Any:
+        return HTMLResponse(content=_ENROLL_PAGE.format(base_url=issuer_url()))
+
+    @router.get("/passkey.js", summary="Passkey (WebAuthn) browser helpers")
+    async def passkey_js() -> Any:
+        from fastapi.responses import Response
+
+        return Response(content=_PASSKEY_JS, media_type="application/javascript")
+
+    # ------------------------------------------------------------------
     # Token endpoint
     # ------------------------------------------------------------------
 
@@ -471,7 +767,9 @@ def build_oidc_router(
             "aud": client_id,
             "iat": now,
             "exp": now + ID_TOKEN_TTL,
-            "amr": ["pgp"],
+            # How the user actually authenticated: ["pgp"] (sovereign) or
+            # ["webauthn"] (passkey convenience tier). Set when the code is minted.
+            "amr": record.claims.get("amr", ["pgp"]),
             "capauth_fingerprint": sub,
         }
         if record.nonce:

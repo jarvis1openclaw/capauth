@@ -1,0 +1,205 @@
+"""WebAuthn passkey front-door for the CapAuth OIDC IdP.
+
+A passkey is a **convenience authenticator bound to an existing sovereign PGP
+fingerprint — NOT a new identity.** You may only register a passkey *after*
+proving ownership of the fingerprint with your PGP key; logging in with the
+passkey then mints the SAME OIDC identity (``sub`` = fingerprint) but with
+``amr=["webauthn"]`` instead of ``["pgp"]`` so a relying party can tell which
+tier was used. This keeps the sovereign PGP credential as the root of trust and
+the passkey as an additive, phishing-resistant easy-mode.
+
+Credentials are persisted (``passkeys.json``) keyed by credential id; the
+WebAuthn challenges (registration tickets + login challenges) live in memory and
+expire. The RP id / origin derive from the IdP issuer.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import secrets
+import threading
+import time
+from pathlib import Path
+from typing import Any, Optional
+from urllib.parse import urlparse
+
+from webauthn import (
+    generate_authentication_options,
+    generate_registration_options,
+    options_to_json,
+    verify_authentication_response,
+    verify_registration_response,
+)
+from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
+from webauthn.helpers.structs import (
+    AuthenticatorSelectionCriteria,
+    PublicKeyCredentialDescriptor,
+    ResidentKeyRequirement,
+    UserVerificationRequirement,
+)
+
+logger = logging.getLogger("capauth.service.oidc.passkey")
+
+RP_NAME = "CapAuth"
+_CHALLENGE_TTL = 300  # seconds for a pending reg/auth ceremony
+
+
+def rp_origin_and_id() -> tuple[str, str]:
+    """Return ``(origin, rp_id)`` derived from the IdP issuer.
+
+    origin = ``https://host[:port]`` (what the browser reports); rp_id = the
+    bare host (no scheme/port), as WebAuthn requires.
+    """
+    iss = (
+        os.environ.get("CAPAUTH_OIDC_ISSUER")
+        or os.environ.get("CAPAUTH_BASE_URL")
+        or f"https://{os.environ.get('CAPAUTH_SERVICE_ID', 'capauth.local')}"
+    ).rstrip("/")
+    netloc = urlparse(iss).netloc or iss.split("//")[-1]
+    rp_id = netloc.split(":")[0]
+    return iss, rp_id
+
+
+class PasskeyStore:
+    """Persisted passkey credentials + in-memory ceremony challenges."""
+
+    def __init__(self, data_dir: str = "/data") -> None:
+        self._dir = Path(data_dir)
+        self._path = self._dir / "passkeys.json"
+        self._lock = threading.Lock()
+        # cred_id(b64url) -> {fingerprint, public_key(b64url), sign_count}
+        self._creds: dict[str, dict] = self._load()
+        self._reg: dict[str, dict] = {}  # ticket -> {fingerprint, challenge, exp}
+        self._auth: dict[str, dict] = {}  # request_id -> {challenge, exp}
+
+    # -- persistence ------------------------------------------------------
+
+    def _load(self) -> dict[str, dict]:
+        try:
+            return json.loads(self._path.read_text())
+        except Exception:
+            return {}
+
+    def _save(self) -> None:
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(json.dumps(self._creds))
+        except Exception as exc:  # pragma: no cover
+            logger.warning("passkey: could not persist credentials: %s", exc)
+
+    def credentials_for(self, fingerprint: str) -> list[str]:
+        fp = (fingerprint or "").upper()
+        return [cid for cid, c in self._creds.items() if c.get("fingerprint") == fp]
+
+    def has_any(self, fingerprint: str) -> bool:
+        return bool(self.credentials_for(fingerprint))
+
+    # -- registration (gated: caller must already be PGP-verified) --------
+
+    def begin_registration(self, fingerprint: str) -> tuple[str, dict[str, Any]]:
+        """Create registration options for a PGP-proven fingerprint.
+
+        Returns ``(ticket, options_dict)``. The ticket binds the subsequent
+        ``complete_registration`` to this fingerprint + challenge.
+        """
+        fp = fingerprint.upper()
+        _origin, rp_id = rp_origin_and_id()
+        exclude = [
+            PublicKeyCredentialDescriptor(id=base64url_to_bytes(cid))
+            for cid in self.credentials_for(fp)
+        ]
+        opts = generate_registration_options(
+            rp_id=rp_id,
+            rp_name=RP_NAME,
+            user_id=fp.encode("ascii"),
+            user_name=f"capauth-{fp[:8]}",
+            user_display_name=f"CapAuth {fp[:8]}",
+            authenticator_selection=AuthenticatorSelectionCriteria(
+                resident_key=ResidentKeyRequirement.PREFERRED,
+                user_verification=UserVerificationRequirement.PREFERRED,
+            ),
+            exclude_credentials=exclude,
+        )
+        ticket = secrets.token_urlsafe(24)
+        self._reg[ticket] = {
+            "fingerprint": fp,
+            "challenge": bytes_to_base64url(opts.challenge),
+            "exp": time.time() + _CHALLENGE_TTL,
+        }
+        return ticket, json.loads(options_to_json(opts))
+
+    def complete_registration(self, ticket: str, credential: Any) -> tuple[str, str]:
+        """Verify the attestation and store the credential. Returns (fp, cred_id)."""
+        rec = self._reg.pop(ticket, None)
+        if rec is None or rec["exp"] < time.time():
+            raise ValueError("expired or unknown registration ticket")
+        origin, rp_id = rp_origin_and_id()
+        verification = verify_registration_response(
+            credential=credential if isinstance(credential, str) else json.dumps(credential),
+            expected_challenge=base64url_to_bytes(rec["challenge"]),
+            expected_rp_id=rp_id,
+            expected_origin=origin,
+            require_user_verification=False,
+        )
+        cid = bytes_to_base64url(verification.credential_id)
+        with self._lock:
+            self._creds[cid] = {
+                "fingerprint": rec["fingerprint"],
+                "public_key": bytes_to_base64url(verification.credential_public_key),
+                "sign_count": verification.sign_count,
+            }
+            self._save()
+        logger.info("passkey registered for fp=%s", rec["fingerprint"][:8])
+        return rec["fingerprint"], cid
+
+    # -- authentication ---------------------------------------------------
+
+    def begin_authentication(self, request_id: str, fingerprint_hint: str = "") -> dict[str, Any]:
+        """Create authentication options for an OIDC login request.
+
+        ``fingerprint_hint`` narrows ``allowCredentials``; omit it for a
+        discoverable (resident-key) login where the authenticator picks.
+        """
+        _origin, rp_id = rp_origin_and_id()
+        allow = [
+            PublicKeyCredentialDescriptor(id=base64url_to_bytes(cid))
+            for cid in self.credentials_for(fingerprint_hint)
+        ] if fingerprint_hint else []
+        opts = generate_authentication_options(
+            rp_id=rp_id,
+            allow_credentials=allow or None,
+            user_verification=UserVerificationRequirement.PREFERRED,
+        )
+        self._auth[request_id] = {
+            "challenge": bytes_to_base64url(opts.challenge),
+            "exp": time.time() + _CHALLENGE_TTL,
+        }
+        return json.loads(options_to_json(opts))
+
+    def complete_authentication(self, request_id: str, credential: Any) -> str:
+        """Verify the assertion against a stored credential. Returns fingerprint."""
+        rec = self._auth.pop(request_id, None)
+        if rec is None or rec["exp"] < time.time():
+            raise ValueError("expired or unknown authentication challenge")
+        cred = credential if isinstance(credential, dict) else json.loads(credential)
+        cid = cred.get("id") or cred.get("rawId")
+        stored = self._creds.get(cid)
+        if not stored:
+            raise ValueError("unknown credential")
+        origin, rp_id = rp_origin_and_id()
+        verification = verify_authentication_response(
+            credential=credential if isinstance(credential, str) else json.dumps(credential),
+            expected_challenge=base64url_to_bytes(rec["challenge"]),
+            expected_rp_id=rp_id,
+            expected_origin=origin,
+            credential_public_key=base64url_to_bytes(stored["public_key"]),
+            credential_current_sign_count=stored["sign_count"],
+            require_user_verification=False,
+        )
+        with self._lock:
+            stored["sign_count"] = verification.new_sign_count
+            self._save()
+        logger.info("passkey login for fp=%s", stored["fingerprint"][:8])
+        return stored["fingerprint"]
