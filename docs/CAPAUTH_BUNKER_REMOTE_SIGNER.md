@@ -154,14 +154,39 @@ cd browser-extension && npx vitest run tests/unit/remote_bunker.test.js
 
 ---
 
-## Hardening follow-ups (NOT done in this spike)
+## Relay E2E-encryption — DONE (`capauth-bunker-e2e-v1`)
 
-1. **E2E-encrypt the relay channel.** Today the relay forwards plaintext
-   app-layer JSON (TLS terminates at the funnel/ingress, so the *broker process*
-   can read the canonical payload + signature). Harden by deriving an X25519
-   shared secret from the pairing secret and encrypting the relayed
-   `payload`/`signature` so the broker only ever sees ciphertext. (The signature
-   is over public data, but the payload + origin leak metadata.)
+The relay no longer forwards plaintext. On pairing, the client and signer each
+generate an **ephemeral X25519** keypair and exchange public keys over the relay
+(`kex`); each derives `shared = X25519(priv, peerPub)` and
+`key = HKDF-SHA256(shared, salt=pairing_secret, info="capauth-bunker-e2e-v1", 32)`.
+Every sensitive message is then **AES-256-GCM** sealed inside an `enc` envelope
+(`base64(nonce ‖ ct ‖ tag)`). **The broker only ever relays `kex` + `enc`** — it
+cannot read the canonical payload or the signature.
+
+- Impl: `src/capauth/service/bunker_e2e.py` (Python) + `lib/bunker-e2e.js`
+  (WebCrypto; identical copy in `browser-extension/` and `phone-signer/`).
+  Broker (`bunker.py` `_RELAYED_TYPES`) relays `kex`/`enc`; a plaintext fallback
+  is retained for legacy/tests.
+- Cross-impl vector `tests/fixtures/bunker_e2e_v1_vector.json` pins the HKDF+AEAD
+  bytes (Python + JS assert identical). Tests: 8 Python + 7 JS.
+- Verified live (cross-impl): Python client ↔ the real phone PWA's WebCrypto,
+  through the deployed broker — broker saw only `paired`/`kex`/`enc`, and the
+  decrypted signature verified GOOD.
+- **Honest threat model:** defeats a PASSIVE / honest-but-curious broker and
+  protects against broker memory/log leakage + an untrusted intermediary relay.
+  It does **not** defeat an ACTIVE MITM by the broker itself (the broker knows
+  the pairing secret and relays the `kex` pubkeys, so it could substitute keys).
+  Closing that needs a secret the broker never sees (e.g. a client-generated key
+  fragment carried only in the QR) — see follow-up #1. And since the same origin
+  serves the PWA, an actively-malicious broker is already game-over, so
+  relay-layer MITM resistance has limited marginal value while it ships the code.
+
+## Hardening follow-ups (NOT done)
+
+1. **Active-MITM resistance vs the broker itself.** Carry a client-generated key
+   fragment only in the QR (never to the broker) and mix it into the HKDF, so the
+   broker cannot derive the channel key even by substituting `kex` pubkeys.
 2. **Replay / nonce protection on the bunker protocol.** Bind each
    `sign_request` to a broker-issued challenge + monotonic counter; reject
    duplicate `id`s. Today only the CapAuth nonce TTL guards replay.
