@@ -303,9 +303,14 @@ async function refreshUnlock() {
   } catch {
     unlocked = false;
   }
-  // Show the unlock box only when a key exists but the session is locked.
+  // Show the unlock box only when the active backend has an at-rest key that is
+  // currently locked. native-gpg has nothing to unlock here (gpg-agent owns the
+  // key + pinentry); CHECK_STATUS reports `needsUnlock` per backend.
   const status = await bg("CHECK_STATUS").catch(() => ({}));
-  const needsUnlock = status.hasPrivateKey && !unlocked;
+  const needsUnlock =
+    status.needsUnlock !== undefined
+      ? status.needsUnlock && !unlocked
+      : status.hasPrivateKey && !unlocked;
   section.style.display = needsUnlock ? "block" : "none";
 }
 

@@ -23,6 +23,14 @@ import {
   verifySignature,
 } from "./lib/openpgp-bundle.js";
 
+import {
+  createSignerBackend,
+  SIGNER_BACKENDS,
+  DEFAULT_BACKEND,
+  LocalEncryptedBackend,
+  NativeGpgBackend,
+} from "./lib/signer-backends.js";
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -36,26 +44,29 @@ const SETTINGS_KEY = "capauth_settings";
 // In-memory key unlock session
 // ---------------------------------------------------------------------------
 //
-// The unlocked passphrase is held in service-worker memory ONLY (never written
-// to storage) so `window.capauth.signChallenge()` can sign without re-prompting
-// on every call. It is cleared when the session expires or the worker restarts.
+// The unlock session is held in service-worker memory ONLY (never written to
+// storage) so `window.capauth.signChallenge()` can sign without re-prompting on
+// every call. It is cleared when the session expires or the worker restarts.
 //
-// STUB (follow-up): at-rest encryption of the stored private key. Today the
-// armored private key lives in chrome.storage.local (see options.js). The
-// intended hardening is to store it encrypted (passphrase-derived key via
-// WebCrypto PBKDF2/AES-GCM) and decrypt into memory on unlock. The unlock
-// plumbing below is structured for that; the encryption itself is not yet
-// implemented — documented in browser-extension/README.md.
+// What the session holds depends on the active signer backend:
+//   - local-plaintext: `passphrase` — the PGP key's own passphrase, applied to
+//     the (unencrypted) armored key in storage.
+//   - local-encrypted: `decryptedKey` — the armored private key recovered by
+//     decrypting the at-rest AES-GCM envelope with the entered passphrase. The
+//     plaintext key exists ONLY here, in memory, for the unlock window.
+//   - native-gpg: no session needed — the key never enters the browser; gpg-
+//     agent handles its own caching / pinentry.
 const UNLOCK_TTL_MS = 15 * 60_000; // 15 min unlock window
-let unlockSession = null; // { passphrase, unlockedAt, expiresAt }
+let unlockSession = null; // { passphrase?, decryptedKey?, unlockedAt, expiresAt }
 
 function isUnlocked() {
   return !!(unlockSession && Date.now() < unlockSession.expiresAt);
 }
 
-function setUnlock(passphrase) {
+function setUnlock({ passphrase = "", decryptedKey = null } = {}) {
   unlockSession = {
     passphrase: passphrase || "",
+    decryptedKey: decryptedKey || null,
     unlockedAt: Date.now(),
     expiresAt: Date.now() + UNLOCK_TTL_MS,
   };
@@ -66,7 +77,7 @@ function clearUnlock() {
 }
 
 /**
- * Resolve the passphrase to use for signing.
+ * Resolve the PGP key passphrase to use (local-plaintext backend).
  *
  * Precedence: an explicit per-call passphrase > the active unlock session > "".
  * An empty string is valid for unprotected keys.
@@ -75,6 +86,38 @@ function resolvePassphrase(explicit) {
   if (explicit) return explicit;
   if (isUnlocked()) return unlockSession.passphrase;
   return "";
+}
+
+/**
+ * Return the decrypted armored key from the unlock session (local-encrypted
+ * backend), or null when locked / not applicable.
+ */
+function getDecryptedKey() {
+  if (isUnlocked() && unlockSession.decryptedKey) return unlockSession.decryptedKey;
+  return null;
+}
+
+/**
+ * Build the configured signer backend, wired to the in-memory unlock session.
+ *
+ * The returned backend exposes `sign(canonicalPayload)` and `getFingerprint()`.
+ * The canonical bytes are signed VERBATIM by whichever backend is active, so the
+ * signed CAPAUTH_NONCE_V2 payload is identical regardless of custody choice.
+ *
+ * @param {Object} settings - The loaded `capauth_settings`.
+ * @param {string} [explicitPassphrase] - Optional per-call PGP passphrase
+ *   (local-plaintext only).
+ * @returns {import("./lib/signer-backends.js").LocalPlaintextBackend}
+ */
+function getSignerBackend(settings, explicitPassphrase) {
+  return createSignerBackend(settings, {
+    resolvePassphrase: () => resolvePassphrase(explicitPassphrase),
+    getDecryptedKey,
+    // For local-encrypted, the same unlock passphrase that decrypted the
+    // AES-GCM envelope is reused to unlock the (possibly inner-protected) PGP
+    // key. "" when the inner key carries no passphrase.
+    getPgpPassphrase: () => (isUnlocked() ? unlockSession.passphrase : ""),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -205,16 +248,14 @@ class CapAuthClient {
    * matching the Python canonical_nonce_payload() format exactly.
    *
    * @param {Object} challenge - Challenge response from fetchChallenge().
-   * @param {string} privateKeyArmored - ASCII-armored PGP private key.
-   * @param {string} [passphrase=''] - Passphrase to unlock the private key.
+   * @param {Object} backend - A signer backend with `sign(canonicalPayload)`.
    * @returns {Promise<string>} ASCII-armored PGP detached signature.
    */
-  async signNonce(challenge, privateKeyArmored, passphrase = "") {
+  async signNonce(challenge, backend) {
     // Origin-binding (Tier A): if the server asserted an `origin` in the
     // challenge, sign the V2 origin-bound payload; otherwise sign legacy V1
-    // (dual-accept migration). TIER B (the real phishing fix, out of scope
-    // here): override with `window.location.origin` of the page actually being
-    // authenticated so the server rejects a relayed/proxied origin.
+    // (dual-accept migration). The exact canonical bytes are built HERE and
+    // handed verbatim to the configured signer backend (custody-agnostic).
     const canonicalPayload = buildCanonicalNoncePayload({
       nonce: challenge.nonce,
       clientNonce: challenge.client_nonce_echo,
@@ -224,7 +265,7 @@ class CapAuthClient {
       expires: challenge.expires,
     });
 
-    return await signMessage(canonicalPayload, privateKeyArmored, passphrase);
+    return await backend.sign(canonicalPayload);
   }
 
   /**
@@ -233,18 +274,17 @@ class CapAuthClient {
    * @param {string} fingerprint - Client's PGP fingerprint.
    * @param {string} nonce - The challenge nonce UUID.
    * @param {Object} claims - Profile claims to assert.
-   * @param {string} privateKeyArmored - ASCII-armored PGP private key.
-   * @param {string} [passphrase=''] - Passphrase to unlock the private key.
+   * @param {Object} backend - A signer backend with `sign(canonicalPayload)`.
    * @returns {Promise<string>} ASCII-armored PGP detached signature over claims.
    */
-  async signClaims(fingerprint, nonce, claims, privateKeyArmored, passphrase = "") {
+  async signClaims(fingerprint, nonce, claims, backend) {
     const canonicalPayload = buildCanonicalClaimsPayload({
       fingerprint,
       nonce,
       claims,
     });
 
-    return await signMessage(canonicalPayload, privateKeyArmored, passphrase);
+    return await backend.sign(canonicalPayload);
   }
 
   /**
@@ -482,6 +522,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       handleProviderSignChallenge(payload).then(sendResponse);
       break;
 
+    // --- native-gpg host detection (options page) ---
+    case "NATIVE_HOST_PING":
+      handleNativeHostPing().then(sendResponse);
+      break;
+
     // --- key unlock session ---
     case "UNLOCK_KEY":
       handleUnlockKey(payload).then(sendResponse);
@@ -562,12 +607,30 @@ async function handleInitiateAuth(payload) {
       };
     }
 
-    // Resolve private key
-    const keyArmored = privateKeyArmored || settings.privateKeyArmored;
-    if (!keyArmored) {
+    // Resolve the signer backend (custody is configurable). An explicit
+    // per-call armored key (legacy callers) overrides the configured backend.
+    const backend = privateKeyArmored
+      ? getSignerBackend(
+          { ...settings, signerBackend: SIGNER_BACKENDS.LOCAL_PLAINTEXT, privateKeyArmored },
+          passphrase
+        )
+      : getSignerBackend(settings, passphrase);
+
+    const backendName = privateKeyArmored
+      ? SIGNER_BACKENDS.LOCAL_PLAINTEXT
+      : settings.signerBackend || DEFAULT_BACKEND;
+
+    // Validate that the chosen backend has something to sign with.
+    if (backendName === SIGNER_BACKENDS.LOCAL_PLAINTEXT && !(privateKeyArmored || settings.privateKeyArmored)) {
       return {
         success: false,
         error: "No private key available. Import your PGP private key in extension settings.",
+      };
+    }
+    if (backendName === SIGNER_BACKENDS.LOCAL_ENCRYPTED && !settings.encryptedKey) {
+      return {
+        success: false,
+        error: "No encrypted key configured. Import + encrypt your key in extension settings.",
       };
     }
 
@@ -593,8 +656,8 @@ async function handleInitiateAuth(payload) {
     // Track the nonce for TTL management
     trackNonce(challenge.nonce, challenge);
 
-    // Step 3: Sign the nonce
-    const nonceSignature = await client.signNonce(challenge, keyArmored, passphrase);
+    // Step 3: Sign the nonce (via the configured custody backend)
+    const nonceSignature = await client.signNonce(challenge, backend);
 
     // Step 4: Optionally sign claims
     let claimsSignature = "";
@@ -603,8 +666,7 @@ async function handleInitiateAuth(payload) {
         fingerprint,
         challenge.nonce,
         claims,
-        keyArmored,
-        passphrase
+        backend
       );
     }
 
@@ -647,8 +709,23 @@ async function handleCheckStatus() {
   try {
     const settings = await loadSettings();
     const fingerprint = settings.fingerprint || "";
-    const hasPrivateKey = !!settings.privateKeyArmored;
+    const backendName = settings.signerBackend || DEFAULT_BACKEND;
     const serviceUrl = settings.serviceUrl || "";
+
+    // "Has a usable signer" per backend:
+    //   plaintext → armored key present; encrypted → envelope present;
+    //   native-gpg → no in-browser key, but the host can sign (treat as ready).
+    let hasPrivateKey;
+    let needsUnlock = false;
+    if (backendName === SIGNER_BACKENDS.LOCAL_ENCRYPTED) {
+      hasPrivateKey = !!settings.encryptedKey;
+      needsUnlock = hasPrivateKey && !getDecryptedKey();
+    } else if (backendName === SIGNER_BACKENDS.NATIVE_GPG) {
+      hasPrivateKey = true; // key lives in gpg-agent; nothing to unlock here
+      needsUnlock = false;
+    } else {
+      hasPrivateKey = !!settings.privateKeyArmored;
+    }
 
     let serviceReachable = false;
     if (serviceUrl) {
@@ -665,6 +742,8 @@ async function handleCheckStatus() {
       configured: !!fingerprint,
       fingerprint,
       hasPrivateKey,
+      backend: backendName,
+      needsUnlock,
       serviceUrl,
       serviceReachable,
     };
@@ -695,12 +774,14 @@ async function handleSignChallenge(payload) {
 
   try {
     const settings = await loadSettings();
-    const keyArmored = privateKeyArmored || settings.privateKeyArmored;
-    if (!keyArmored) {
-      return { success: false, error: "No private key available." };
-    }
+    const backend = privateKeyArmored
+      ? getSignerBackend(
+          { ...settings, signerBackend: SIGNER_BACKENDS.LOCAL_PLAINTEXT, privateKeyArmored },
+          passphrase
+        )
+      : getSignerBackend(settings, passphrase);
 
-    const signature = await client.signNonce(challenge, keyArmored, passphrase);
+    const signature = await client.signNonce(challenge, backend);
     return { success: true, signature };
   } catch (err) {
     return { success: false, error: err.message };
@@ -820,7 +901,19 @@ async function handleQRLogin(payload) {
 async function handleProviderGetFingerprint(payload) {
   try {
     const settings = await loadSettings();
-    const fingerprint = settings.fingerprint || "";
+    let fingerprint = settings.fingerprint || "";
+
+    // For native-gpg, the host is authoritative for the fingerprint (the key
+    // lives in gpg-agent). Fall back to the configured value if the host is
+    // unavailable so the page still gets an answer.
+    if ((settings.signerBackend || DEFAULT_BACKEND) === SIGNER_BACKENDS.NATIVE_GPG) {
+      try {
+        fingerprint = await getSignerBackend(settings).getFingerprint();
+      } catch {
+        /* keep the configured fingerprint */
+      }
+    }
+
     if (!fingerprint) {
       return { success: false, error: "No PGP identity configured in CapAuth." };
     }
@@ -866,9 +959,19 @@ async function handleProviderSignChallenge(payload) {
   try {
     const settings = await loadSettings();
     const fingerprint = settings.fingerprint || "";
-    const keyArmored = settings.privateKeyArmored || "";
-    if (!fingerprint || !keyArmored) {
+    const backendName = settings.signerBackend || DEFAULT_BACKEND;
+
+    // Each backend has a different "is a signer configured?" check. The private
+    // key boundary is unchanged: it never crosses into page scope under any
+    // backend.
+    if (!fingerprint) {
+      return { success: false, error: "No PGP identity configured in CapAuth settings." };
+    }
+    if (backendName === SIGNER_BACKENDS.LOCAL_PLAINTEXT && !settings.privateKeyArmored) {
       return { success: false, error: "No PGP key configured. Import your key in CapAuth settings." };
+    }
+    if (backendName === SIGNER_BACKENDS.LOCAL_ENCRYPTED && !settings.encryptedKey) {
+      return { success: false, error: "No encrypted key configured. Import + encrypt your key in CapAuth settings." };
     }
 
     // Phishing-resistant consent: the user must approve THIS origin.
@@ -878,6 +981,7 @@ async function handleProviderSignChallenge(payload) {
     }
 
     // Build the EXACT CAPAUTH_NONCE_V2 bytes (origin = the real page origin).
+    // These bytes are identical regardless of custody backend.
     const canonical = buildCanonicalNoncePayload({
       nonce: challenge.nonce,
       clientNonce: challenge.client_nonce_echo,
@@ -887,8 +991,8 @@ async function handleProviderSignChallenge(payload) {
       expires: challenge.expires,
     });
 
-    const passphrase = resolvePassphrase(challenge.passphrase);
-    const signature = await signMessage(canonical, keyArmored, passphrase);
+    const backend = getSignerBackend(settings, challenge.passphrase);
+    const signature = await backend.sign(canonical);
 
     return { success: true, signature, fingerprint, origin, canonical };
   } catch (err) {
@@ -899,8 +1003,17 @@ async function handleProviderSignChallenge(payload) {
 /**
  * Unlock the signing key for the current service-worker session.
  *
- * Verifies the passphrase actually decrypts the stored key, then caches it in
- * memory (never storage) for UNLOCK_TTL_MS.
+ * Backend-aware:
+ *   - local-plaintext: verifies the passphrase actually decrypts the stored
+ *     (unencrypted-at-rest) PGP key by performing a throwaway signature, then
+ *     caches the PGP passphrase in memory for UNLOCK_TTL_MS.
+ *   - local-encrypted: decrypts the at-rest AES-GCM envelope with the entered
+ *     passphrase (a wrong passphrase fails the GCM auth tag) and caches the
+ *     RECOVERED ARMORED KEY in memory (never storage) for UNLOCK_TTL_MS.
+ *   - native-gpg: nothing to unlock here (gpg-agent owns the key + pinentry).
+ *
+ * The plaintext key / passphrase is held in memory only and is cleared on
+ * expiry or worker restart.
  *
  * @param {Object} payload
  * @param {string} payload.passphrase
@@ -910,17 +1023,62 @@ async function handleUnlockKey(payload) {
   const { passphrase = "" } = payload || {};
   try {
     const settings = await loadSettings();
+    const backendName = settings.signerBackend || DEFAULT_BACKEND;
+
+    if (backendName === SIGNER_BACKENDS.NATIVE_GPG) {
+      // No in-browser key to unlock; gpg-agent handles its own pinentry.
+      return { success: true, unlocked: true };
+    }
+
+    if (backendName === SIGNER_BACKENDS.LOCAL_ENCRYPTED) {
+      const envelope = settings.encryptedKey || null;
+      if (!envelope) {
+        return { success: false, error: "No encrypted key imported." };
+      }
+      // Decrypt the at-rest envelope; wrong passphrase → AES-GCM auth failure.
+      const armored = await LocalEncryptedBackend.unlock(envelope, passphrase);
+      // Sanity-check the recovered key is actually a usable PGP key. If the key
+      // also has its OWN PGP passphrase we cannot probe-sign it here, so accept
+      // a successful decrypt + structural marker as proof of correct passphrase.
+      if (!armored.includes("BEGIN PGP PRIVATE KEY BLOCK")) {
+        throw new Error("decrypted blob is not a PGP private key");
+      }
+      // Keep both the decrypted key AND the passphrase in the session: the same
+      // passphrase is reused to unlock the inner PGP key if it is protected.
+      setUnlock({ decryptedKey: armored, passphrase });
+      return { success: true, unlocked: true };
+    }
+
+    // local-plaintext (default)
     const keyArmored = settings.privateKeyArmored || "";
     if (!keyArmored) {
       return { success: false, error: "No private key imported." };
     }
     // Prove the passphrase works by performing a throwaway signature.
     await signMessage("capauth-unlock-probe", keyArmored, passphrase);
-    setUnlock(passphrase);
+    setUnlock({ passphrase });
     return { success: true, unlocked: true };
   } catch (err) {
     clearUnlock();
     return { success: false, error: "Incorrect passphrase or unreadable key." };
+  }
+}
+
+/**
+ * Probe the native-messaging host (options page "detected / not detected").
+ *
+ * Asks the host for its fingerprint via connectNative. Resolves with the host's
+ * fingerprint on success; reports not-detected on disconnect/timeout.
+ *
+ * @returns {Promise<Object>} { success, detected, fingerprint?, error? }
+ */
+async function handleNativeHostPing() {
+  try {
+    const backend = new NativeGpgBackend({});
+    const fingerprint = await backend.getFingerprint();
+    return { success: true, detected: true, fingerprint };
+  } catch (err) {
+    return { success: true, detected: false, error: err.message };
   }
 }
 

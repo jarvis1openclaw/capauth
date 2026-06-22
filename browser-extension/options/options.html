@@ -260,6 +260,72 @@
       color: var(--text-primary);
     }
 
+    /* Backend selector */
+    .backend-options {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .radio-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: border-color 0.12s, background 0.12s;
+    }
+
+    .radio-row:hover { border-color: var(--accent); }
+
+    .radio-row input[type="radio"] {
+      margin-top: 3px;
+      accent-color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .radio-row:has(input:checked) {
+      border-color: var(--accent);
+      background: rgba(124, 58, 237, 0.08);
+    }
+
+    .radio-title {
+      font-size: 13px;
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    .radio-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      line-height: 1.4;
+    }
+
+    .backend-panel { margin-top: 8px; }
+
+    .native-status {
+      font-size: 12px;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+
+    .native-status.detected {
+      color: var(--success);
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+
+    .native-status.missing {
+      color: var(--error);
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+
     /* Security warning */
     .security-notice {
       background: rgba(245, 158, 11, 0.1);
@@ -306,24 +372,117 @@
     <div class="field-hint">Base URL of the CapAuth verification service to authenticate against.</div>
   </div>
 
-  <!-- Private Key -->
-  <h2>Private Key</h2>
-
-  <div class="security-notice">
-    Your private key is stored in the browser's local storage. For maximum security,
-    consider using a hardware token (YubiKey) instead. The key never leaves this
-    extension and is never transmitted to any server.
-  </div>
+  <!-- Key custody backend -->
+  <h2>Key Custody</h2>
 
   <div class="field">
-    <label>ASCII-Armored PGP Private Key</label>
-    <textarea id="private-key"
-              placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----&#10;&#10;Paste your armored private key here...&#10;&#10;-----END PGP PRIVATE KEY BLOCK-----"
-              rows="8" spellcheck="false" autocomplete="off"></textarea>
-    <div class="field-hint">Export with <code>gpg --armor --export-secret-keys &lt;fingerprint&gt;</code>. Signs challenge nonces locally — never sent to any page. <strong>⚠ Currently stored unencrypted in extension storage.</strong> Stronger custody (passphrase-encrypted at-rest, gpg-agent via native-messaging, or a phone remote-signer) is on the roadmap.</div>
+    <label>Where does your private key live?</label>
+    <div class="backend-options">
+      <label class="radio-row">
+        <input type="radio" name="signer-backend" value="local-plaintext">
+        <div>
+          <div class="radio-title">Paste key (plaintext — testing)</div>
+          <div class="radio-desc">Armored key stored <strong>unencrypted</strong> in browser storage. Demo-grade only.</div>
+        </div>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="signer-backend" value="local-encrypted">
+        <div>
+          <div class="radio-title">Encrypted key in browser (passphrase)</div>
+          <div class="radio-desc">Armored key encrypted at rest (PBKDF2 → AES-GCM). Unlock with a passphrase each session.</div>
+        </div>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="signer-backend" value="native-gpg">
+        <div>
+          <div class="radio-title">Local gpg-agent (native host)</div>
+          <div class="radio-desc">Key <strong>never enters the browser</strong>. Signs via OS gpg/gpg-agent — supports YubiKey/smartcard. Best local custody.</div>
+        </div>
+      </label>
+    </div>
   </div>
 
-  <div class="field">
+  <!-- Backend: local-plaintext -->
+  <div id="backend-local-plaintext" class="backend-panel">
+    <div class="security-notice">
+      Your private key is stored <strong>unencrypted</strong> in the browser's local storage.
+      This is for testing only — prefer "Encrypted key" or "Local gpg-agent" for real use.
+      The key never leaves this extension and is never transmitted to any server.
+    </div>
+
+    <div class="field">
+      <label>ASCII-Armored PGP Private Key</label>
+      <textarea id="private-key"
+                placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----&#10;&#10;Paste your armored private key here...&#10;&#10;-----END PGP PRIVATE KEY BLOCK-----"
+                rows="8" spellcheck="false" autocomplete="off"></textarea>
+      <div class="field-hint">Export with <code>gpg --armor --export-secret-keys &lt;fingerprint&gt;</code>. Signs challenge nonces locally — never sent to any page. <strong>⚠ Stored unencrypted.</strong></div>
+    </div>
+  </div>
+
+  <!-- Backend: local-encrypted -->
+  <div id="backend-local-encrypted" class="backend-panel" style="display:none">
+    <div class="security-notice" style="background:rgba(16,185,129,0.08);border-color:rgba(16,185,129,0.25);color:#10b981">
+      Your key is encrypted at rest with a passphrase-derived key (PBKDF2-SHA256 ≥210k iters → AES-GCM).
+      Only the ciphertext is stored — never the plaintext key. Decrypted into memory on unlock (~15 min).
+    </div>
+
+    <div class="field">
+      <label>ASCII-Armored PGP Private Key (encrypted on save)</label>
+      <textarea id="private-key-enc"
+                placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----&#10;&#10;Paste your armored private key here — it will be encrypted before storage...&#10;&#10;-----END PGP PRIVATE KEY BLOCK-----"
+                rows="8" spellcheck="false" autocomplete="off"></textarea>
+      <div class="field-hint">Export with <code>gpg --armor --export-secret-keys &lt;fingerprint&gt;</code>. Encrypted with your passphrase below before it touches storage.</div>
+    </div>
+
+    <div class="field">
+      <label>Encryption passphrase</label>
+      <input type="password" id="enc-passphrase" placeholder="Passphrase to encrypt the key at rest" autocomplete="off">
+      <div class="field-hint">Used to derive the AES-GCM key. You'll re-enter it to unlock each session. Choose a strong passphrase — there is no recovery.</div>
+    </div>
+
+    <div class="field">
+      <label>Confirm passphrase</label>
+      <input type="password" id="enc-passphrase-confirm" placeholder="Re-type the passphrase" autocomplete="off">
+    </div>
+
+    <div id="enc-status" class="field-hint"></div>
+
+    <div id="migrate-box" class="security-notice" style="display:none;background:rgba(245,158,11,0.1);border-color:rgba(245,158,11,0.25);color:#f59e0b">
+      A legacy <strong>plaintext</strong> key is stored. Enter a passphrase above and click
+      <strong>Encrypt existing key</strong> to migrate it to encryption-at-rest (the plaintext copy is removed).
+      <div style="margin-top:8px"><button class="btn btn-primary" id="btn-migrate" type="button">Encrypt existing key</button></div>
+    </div>
+  </div>
+
+  <!-- Backend: native-gpg -->
+  <div id="backend-native-gpg" class="backend-panel" style="display:none">
+    <div class="security-notice" style="background:rgba(0,229,255,0.08);border-color:rgba(0,229,255,0.2);color:#00e5ff">
+      The private key <strong>never enters the browser.</strong> A small native-messaging host
+      signs via your OS <code>gpg</code> / gpg-agent (smartcard/YubiKey supported).
+    </div>
+
+    <div class="field">
+      <label>Signing key fingerprint</label>
+      <input type="text" class="fingerprint-input" id="native-fingerprint"
+             placeholder="Auto-detected from gpg, or paste a 40-char fingerprint"
+             maxlength="40" spellcheck="false" autocomplete="off">
+      <div class="field-hint">Passed to the host as <code>gpg --local-user &lt;fp&gt;</code>. Leave blank to use gpg's default secret key.</div>
+    </div>
+
+    <div class="field">
+      <label>Native host status</label>
+      <div id="native-status" class="native-status">Not checked</div>
+      <div style="margin-top:8px"><button class="btn btn-primary" id="btn-native-check" type="button">Check for native host</button></div>
+      <div class="field-hint">
+        Install the host: from <code>browser-extension/native-host/</code> run
+        <code>./install.sh &lt;EXTENSION_ID&gt;</code> (your extension ID is on <code>chrome://extensions</code>).
+        See the README for macOS / Windows paths.
+      </div>
+    </div>
+  </div>
+
+  <!-- Public key (shared, all backends) -->
+  <div class="field" style="margin-top:14px">
     <label>ASCII-Armored PGP Public Key (for enrollment)</label>
     <textarea id="public-key"
               placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----&#10;&#10;Paste your armored public key here...&#10;&#10;-----END PGP PUBLIC KEY BLOCK-----"
@@ -362,6 +521,6 @@
     <a href="https://smilintux.org/join" target="_blank">smilintux.org</a>
   </div>
 
-  <script src="options.js"></script>
+  <script type="module" src="options.js"></script>
 </body>
 </html>

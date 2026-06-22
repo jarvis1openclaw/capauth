@@ -1,0 +1,9 @@
+{
+  "name": "com.capauth.signer",
+  "description": "CapAuth native signer — bridges the browser extension to OS gpg/gpg-agent (key never enters the browser).",
+  "path": "__HOST_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__EXTENSION_ID__/"
+  ]
+}

@@ -1,123 +1,283 @@
 /**
  * CapAuth options page controller.
  *
- * Manages persistent settings stored in chrome.storage.local:
- *   - PGP fingerprint
- *   - Default service URL
- *   - Private key (armored PGP)
- *   - Public key (armored PGP, for enrollment)
- *   - Auto-sign toggle
+ * Manages persistent settings in chrome.storage.local, including the
+ * configurable signer-backend (key custody):
+ *   - local-plaintext: armored key stored UNENCRYPTED (testing).
+ *   - local-encrypted: armored key encrypted at rest (PBKDF2 → AES-GCM).
+ *   - native-gpg:      key never enters the browser; signs via gpg-agent host.
  *
  * @module options
  */
 
+import { encryptPrivateKey, isEncryptedEnvelope } from "../lib/keyvault.js";
+
 const SETTINGS_KEY = "capauth_settings";
 const TOKEN_STORAGE_PREFIX = "capauth_token_";
 
-/**
- * Default settings values.
- */
+const BACKENDS = {
+  PLAINTEXT: "local-plaintext",
+  ENCRYPTED: "local-encrypted",
+  NATIVE: "native-gpg",
+};
+
 const DEFAULTS = {
   fingerprint: "",
   serviceUrl: "",
   privateKeyArmored: "",
   publicKeyArmored: "",
+  encryptedKey: null,
+  signerBackend: BACKENDS.PLAINTEXT,
   autoSign: false,
 };
 
-/**
- * Load settings from chrome.storage.local and populate the form.
- */
-async function loadSettings() {
-  const result = await chrome.storage.local.get(SETTINGS_KEY);
-  const settings = { ...DEFAULTS, ...result[SETTINGS_KEY] };
+let currentSettings = { ...DEFAULTS };
 
-  document.getElementById("fingerprint").value = settings.fingerprint;
-  document.getElementById("service-url").value = settings.serviceUrl;
-  document.getElementById("private-key").value = settings.privateKeyArmored;
-  document.getElementById("public-key").value = settings.publicKeyArmored;
-  document.getElementById("auto-sign").checked = settings.autoSign;
+// ---------------------------------------------------------------------------
+// DOM helpers
+// ---------------------------------------------------------------------------
+
+const $ = (id) => document.getElementById(id);
+
+function selectedBackend() {
+  const checked = document.querySelector('input[name="signer-backend"]:checked');
+  return checked ? checked.value : BACKENDS.PLAINTEXT;
 }
 
-/**
- * Save the current form values to chrome.storage.local.
- */
-async function saveSettings() {
-  const fingerprint = document.getElementById("fingerprint").value.trim().toUpperCase();
-  const serviceUrl = document.getElementById("service-url").value.trim();
-  const privateKeyArmored = document.getElementById("private-key").value.trim();
-  const publicKeyArmored = document.getElementById("public-key").value.trim();
-  const autoSign = document.getElementById("auto-sign").checked;
+function setBackendRadio(value) {
+  const el = document.querySelector(`input[name="signer-backend"][value="${value}"]`);
+  if (el) el.checked = true;
+}
 
-  // Basic validation
-  if (fingerprint && fingerprint.length !== 40) {
+/** Show only the panel for the active backend + refresh dependent UI. */
+function syncBackendPanels() {
+  const backend = selectedBackend();
+  $("backend-local-plaintext").style.display = backend === BACKENDS.PLAINTEXT ? "block" : "none";
+  $("backend-local-encrypted").style.display = backend === BACKENDS.ENCRYPTED ? "block" : "none";
+  $("backend-native-gpg").style.display = backend === BACKENDS.NATIVE ? "block" : "none";
+
+  // Migration prompt: offer to encrypt an existing plaintext key.
+  if (backend === BACKENDS.ENCRYPTED) {
+    const hasLegacyPlaintext = !!currentSettings.privateKeyArmored;
+    $("migrate-box").style.display = hasLegacyPlaintext ? "block" : "none";
+    const encStatus = $("enc-status");
+    if (isEncryptedEnvelope(currentSettings.encryptedKey)) {
+      encStatus.textContent = "An encrypted key is already stored. Re-paste + set a passphrase to replace it.";
+    } else {
+      encStatus.textContent = "";
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Load / save
+// ---------------------------------------------------------------------------
+
+async function loadSettings() {
+  const result = await chrome.storage.local.get(SETTINGS_KEY);
+  currentSettings = { ...DEFAULTS, ...result[SETTINGS_KEY] };
+
+  $("fingerprint").value = currentSettings.fingerprint;
+  $("service-url").value = currentSettings.serviceUrl;
+  $("private-key").value = currentSettings.privateKeyArmored;
+  $("public-key").value = currentSettings.publicKeyArmored;
+  $("auto-sign").checked = currentSettings.autoSign;
+  $("native-fingerprint").value = currentSettings.fingerprint;
+
+  setBackendRadio(currentSettings.signerBackend || BACKENDS.PLAINTEXT);
+  syncBackendPanels();
+}
+
+function validateFingerprint(fp) {
+  if (!fp) return true;
+  if (fp.length !== 40) {
     showStatus("Fingerprint must be exactly 40 hex characters", true);
-    return;
+    return false;
   }
-
-  if (fingerprint && !/^[A-F0-9]{40}$/.test(fingerprint)) {
+  if (!/^[A-F0-9]{40}$/.test(fp)) {
     showStatus("Fingerprint must contain only hex characters (0-9, A-F)", true);
-    return;
+    return false;
   }
+  return true;
+}
 
-  if (privateKeyArmored && !privateKeyArmored.includes("BEGIN PGP PRIVATE KEY BLOCK")) {
-    showStatus("Private key must be ASCII-armored PGP format", true);
-    return;
-  }
+async function saveSettings() {
+  const backend = selectedBackend();
+  const serviceUrl = $("service-url").value.trim();
+  const publicKeyArmored = $("public-key").value.trim();
+  const autoSign = $("auto-sign").checked;
 
   if (publicKeyArmored && !publicKeyArmored.includes("BEGIN PGP PUBLIC KEY BLOCK")) {
     showStatus("Public key must be ASCII-armored PGP format", true);
     return;
   }
 
-  const settings = {
-    fingerprint,
+  // Start from the existing settings so we don't clobber the other backend's
+  // stored material when switching back and forth.
+  const next = {
+    ...currentSettings,
     serviceUrl,
-    privateKeyArmored,
     publicKeyArmored,
     autoSign,
+    signerBackend: backend,
   };
 
-  await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+  // -- Backend-specific handling --------------------------------------------
+  if (backend === BACKENDS.PLAINTEXT) {
+    const fingerprint = $("fingerprint").value.trim().toUpperCase();
+    const privateKeyArmored = $("private-key").value.trim();
+    if (!validateFingerprint(fingerprint)) return;
+    if (privateKeyArmored && !privateKeyArmored.includes("BEGIN PGP PRIVATE KEY BLOCK")) {
+      showStatus("Private key must be ASCII-armored PGP format", true);
+      return;
+    }
+    next.fingerprint = fingerprint;
+    next.privateKeyArmored = privateKeyArmored;
+  } else if (backend === BACKENDS.ENCRYPTED) {
+    const fingerprint = $("fingerprint").value.trim().toUpperCase();
+    if (!validateFingerprint(fingerprint)) return;
+    next.fingerprint = fingerprint;
+
+    const pasted = $("private-key-enc").value.trim();
+    const pass = $("enc-passphrase").value;
+    const confirm = $("enc-passphrase-confirm").value;
+
+    if (pasted) {
+      // Encrypt a freshly-pasted key.
+      if (!pasted.includes("BEGIN PGP PRIVATE KEY BLOCK")) {
+        showStatus("Private key must be ASCII-armored PGP format", true);
+        return;
+      }
+      if (!pass) {
+        showStatus("Set an encryption passphrase", true);
+        return;
+      }
+      if (pass !== confirm) {
+        showStatus("Passphrases do not match", true);
+        return;
+      }
+      try {
+        next.encryptedKey = await encryptPrivateKey(pasted, pass);
+      } catch (err) {
+        showStatus(`Encryption failed: ${err.message}`, true);
+        return;
+      }
+      // Never keep a plaintext copy once encrypted.
+      next.privateKeyArmored = "";
+      // Wipe the textarea + passphrases from the DOM.
+      $("private-key-enc").value = "";
+      $("enc-passphrase").value = "";
+      $("enc-passphrase-confirm").value = "";
+    } else if (!isEncryptedEnvelope(next.encryptedKey)) {
+      showStatus("Paste a private key to encrypt, or use the migrate button", true);
+      return;
+    }
+  } else if (backend === BACKENDS.NATIVE) {
+    const fingerprint = $("native-fingerprint").value.trim().toUpperCase();
+    if (!validateFingerprint(fingerprint)) return;
+    next.fingerprint = fingerprint;
+    // Native backend keeps no key material in the browser.
+  }
+
+  currentSettings = next;
+  await chrome.storage.local.set({ [SETTINGS_KEY]: next });
   showStatus("Settings saved");
+  syncBackendPanels();
 }
 
-/**
- * Clear all extension data (settings + cached tokens).
- */
+/** Migrate a legacy plaintext key into the encrypted envelope. */
+async function migrateToEncrypted() {
+  const legacy = currentSettings.privateKeyArmored;
+  if (!legacy) {
+    showStatus("No legacy plaintext key to migrate", true);
+    return;
+  }
+  const pass = $("enc-passphrase").value;
+  const confirm = $("enc-passphrase-confirm").value;
+  if (!pass) {
+    showStatus("Set an encryption passphrase first", true);
+    return;
+  }
+  if (pass !== confirm) {
+    showStatus("Passphrases do not match", true);
+    return;
+  }
+  try {
+    const envelope = await encryptPrivateKey(legacy, pass);
+    currentSettings = {
+      ...currentSettings,
+      encryptedKey: envelope,
+      privateKeyArmored: "", // remove the plaintext copy
+      signerBackend: BACKENDS.ENCRYPTED,
+    };
+    await chrome.storage.local.set({ [SETTINGS_KEY]: currentSettings });
+    $("enc-passphrase").value = "";
+    $("enc-passphrase-confirm").value = "";
+    $("private-key").value = "";
+    showStatus("Legacy key encrypted; plaintext copy removed");
+    syncBackendPanels();
+  } catch (err) {
+    showStatus(`Migration failed: ${err.message}`, true);
+  }
+}
+
+/** Probe the native-messaging host and update the status badge. */
+async function checkNativeHost() {
+  const el = $("native-status");
+  el.className = "native-status";
+  el.textContent = "Checking…";
+  try {
+    const res = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ action: "NATIVE_HOST_PING", payload: {} }, (response) => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(response);
+      });
+    });
+    if (res && res.detected) {
+      el.className = "native-status detected";
+      el.textContent = res.fingerprint
+        ? `Native host detected. gpg key: ${res.fingerprint}`
+        : "Native host detected.";
+      if (res.fingerprint && !$("native-fingerprint").value) {
+        $("native-fingerprint").value = res.fingerprint;
+      }
+    } else {
+      el.className = "native-status missing";
+      el.textContent = `Native host not detected. ${(res && res.error) || ""}`.trim();
+    }
+  } catch (err) {
+    el.className = "native-status missing";
+    el.textContent = `Native host not detected. ${err.message}`;
+  }
+}
+
 async function clearAllData() {
   if (!confirm("This will clear your PGP key, fingerprint, and all cached tokens. Continue?")) {
     return;
   }
-
-  // Clear settings
   await chrome.storage.local.remove(SETTINGS_KEY);
 
-  // Clear all cached tokens
   const all = await chrome.storage.local.get(null);
   const tokenKeys = Object.keys(all).filter((k) => k.startsWith(TOKEN_STORAGE_PREFIX));
-  if (tokenKeys.length > 0) {
-    await chrome.storage.local.remove(tokenKeys);
-  }
+  if (tokenKeys.length > 0) await chrome.storage.local.remove(tokenKeys);
 
-  // Reset form
-  document.getElementById("fingerprint").value = "";
-  document.getElementById("service-url").value = "";
-  document.getElementById("private-key").value = "";
-  document.getElementById("public-key").value = "";
-  document.getElementById("auto-sign").checked = false;
-
+  currentSettings = { ...DEFAULTS };
+  $("fingerprint").value = "";
+  $("service-url").value = "";
+  $("private-key").value = "";
+  $("private-key-enc").value = "";
+  $("enc-passphrase").value = "";
+  $("enc-passphrase-confirm").value = "";
+  $("native-fingerprint").value = "";
+  $("public-key").value = "";
+  $("auto-sign").checked = false;
+  setBackendRadio(BACKENDS.PLAINTEXT);
+  syncBackendPanels();
   showStatus("All data cleared");
 }
 
-/**
- * Show a save status message.
- *
- * @param {string} message - Status message.
- * @param {boolean} [isError=false] - Whether this is an error message.
- */
 function showStatus(message, isError = false) {
-  const status = document.getElementById("save-status");
+  const status = $("save-status");
   status.textContent = message;
   status.style.display = "block";
   status.style.color = isError ? "#ef4444" : "#10b981";
@@ -133,6 +293,12 @@ function showStatus(message, isError = false) {
 document.addEventListener("DOMContentLoaded", () => {
   loadSettings();
 
-  document.getElementById("btn-save").addEventListener("click", saveSettings);
-  document.getElementById("btn-clear").addEventListener("click", clearAllData);
+  document.querySelectorAll('input[name="signer-backend"]').forEach((r) => {
+    r.addEventListener("change", syncBackendPanels);
+  });
+
+  $("btn-save").addEventListener("click", saveSettings);
+  $("btn-clear").addEventListener("click", clearAllData);
+  $("btn-migrate").addEventListener("click", migrateToEncrypted);
+  $("btn-native-check").addEventListener("click", checkNativeHost);
 });

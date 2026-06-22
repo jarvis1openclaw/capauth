@@ -47,16 +47,70 @@ Then:
 
 ---
 
-## Import your PGP key
+## Key custody — choose a signer backend
+
+CapAuth's signer is pluggable: the background worker asks a **signer backend**
+to sign the canonical challenge bytes. The backend that holds (or doesn't hold)
+your key is selected in **Settings → Key Custody**. All three sign the **exact
+same `CAPAUTH_NONCE_V2` bytes** — switching custody never changes what is signed.
+
+The interface every backend implements:
+
+```js
+interface SignerBackend {
+  async sign(canonicalPayloadString) -> armoredDetachedSignature
+  async getFingerprint()             -> "<40-hex fp>" | ""
+}
+```
+
+### Security tradeoffs (DECISIONS §6 — worst → best custody)
+
+| # | Backend | Where the key lives | At-rest protection | Hardware token | Use when |
+|---|---------|---------------------|--------------------|----------------|----------|
+| 1 | **`local-plaintext`** — *Paste key (plaintext — testing)* | `chrome.storage.local`, **unencrypted** | none (only the browser profile + the key's own PGP passphrase) | no | Quick demos / dev only. Zero-dependency fallback. |
+| 2 | **`local-encrypted`** — *Encrypted key in browser (passphrase)* | `chrome.storage.local` as **ciphertext only** | **PBKDF2-SHA256 ≥210k iters → AES-GCM**; decrypted into memory on unlock (~15 min) | no | The minimum bar for real use without extra tooling. |
+| 3 | **`native-gpg`** — *Local gpg-agent (native host)* | **never enters the browser** — lives in OS gpg-agent | n/a (gpg-agent owns custody) | **yes** (YubiKey / smartcard via gpg-agent) | Best local custody. Requires installing the native host. |
+
+> **NIP-46 remote signer (phone-as-bunker)** is the next step beyond all three
+> and is **out of scope here** — see *Follow-ups*.
+
+### 1 & 2 — import your PGP key (local backends)
 
 1. Click the CapAuth toolbar icon → **gear / Settings** (opens the options page).
-2. Paste your **fingerprint** (40 hex chars), your **service URL**, your
-   **armored private key** (`-----BEGIN PGP PRIVATE KEY BLOCK-----`), and
-   optionally your **public key** (for first-login enrollment).
-3. **Save Settings.**
-4. If your key has a passphrase, open the popup and **Unlock** it. The
-   passphrase is held **in memory only** for ~15 minutes (never written to
-   storage) so `window.capauth` can sign without re-prompting every time.
+2. Pick a **Key Custody** option, fill the fields it reveals:
+   - **Paste key (plaintext):** fingerprint + armored private key.
+   - **Encrypted key:** fingerprint + armored private key + an **encryption
+     passphrase** (typed twice). On **Save**, the key is encrypted with a
+     passphrase-derived AES-GCM key; only the ciphertext is stored — the
+     plaintext is never written. (Migration: if a legacy plaintext key exists,
+     a **"Encrypt existing key"** button appears to convert it and delete the
+     plaintext copy.)
+3. Add your **service URL** and optionally your **public key** (enrollment).
+4. **Save Settings.**
+5. For both local backends: open the popup and **Unlock** with your passphrase.
+   - plaintext → the PGP key passphrase;
+   - encrypted → the encryption passphrase (which decrypts the envelope into
+     memory; the same passphrase also unlocks the inner PGP key if protected).
+
+   The passphrase / decrypted key is held **in memory only** for ~15 minutes
+   (never written to storage) so `window.capauth` can sign without re-prompting.
+
+### 3 — native gpg-agent host (key never enters the browser)
+
+```bash
+cd browser-extension/native-host
+./install.sh <EXTENSION_ID>     # <EXTENSION_ID> from chrome://extensions
+```
+
+This installs the per-user Native Messaging manifest pointing at
+`capauth_signer.py`, restricted to your extension via `allowed_origins`. Then in
+**Settings → Key Custody** choose **Local gpg-agent**, click **Check for native
+host** (it should show *detected* + your gpg fingerprint), and **Save**.
+
+Requirements: `gpg` on PATH with your secret key imported, gpg-agent running
+(smartcard/YubiKey supported). See `native-host/` for the protocol and the
+manifest install locations for **Chrome / Chromium / Brave / Edge** and notes
+for **macOS / Windows**.
 
 ---
 
@@ -151,25 +205,61 @@ Covers (among others):
 
 ---
 
-## What is stubbed / out of scope (follow-ups)
+## Native messaging host (native-gpg backend)
 
-- **At-rest key encryption.** The armored private key is currently stored in
-  `chrome.storage.local` (see `options.js`). The unlock plumbing
-  (`UNLOCK_KEY` / in-memory passphrase session in `background.js`) is built for
-  a passphrase-derived WebCrypto (PBKDF2 + AES-GCM) encryption-at-rest layer,
-  but the encryption step itself is **not yet implemented**. Until then, treat
-  the stored key as protected only by its own PGP passphrase + the browser
-  profile's protections.
-- **Multi-key management.** One identity at a time. Key selection / multiple
+`native-host/capauth_signer.py` is a tiny stdio Native Messaging host. Protocol
+(little-endian uint32 length prefix + UTF-8 JSON body):
+
+```
+-> { "op": "get_fingerprint" }                          <- { "fingerprint": "<40hex>" }
+-> { "op": "sign", "payload": "<canonical bytes>",      <- { "signature": "<armored>" }
+     "fingerprint"?: "<40hex>" }
+(any error)                                             <- { "error": "<message>" }
+```
+
+The host signs with `gpg --armor --detach-sign --pinentry-mode loopback
+--local-user <fp>` and writes the canonical payload to gpg's stdin **verbatim**
+(no added newline), so the detached signature verifies against the exact same
+`CAPAUTH_NONCE_V2` bytes the server rebuilds. The key never leaves gpg-agent; the
+host only shuttles bytes and never reads/logs/echoes key material. Inputs are
+length-capped and fingerprint-validated.
+
+Manifest install locations (per-user) — see `native-host/install.sh`:
+
+| OS | Chrome | Chromium |
+|----|--------|----------|
+| Linux | `~/.config/google-chrome/NativeMessagingHosts/` | `~/.config/chromium/NativeMessagingHosts/` |
+| macOS | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/` | `~/Library/Application Support/Chromium/NativeMessagingHosts/` |
+| Windows | registry key `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.capauth.signer` → manifest path; `"path"` points at a `.bat` launcher running `python capauth_signer.py` | analogous |
+
+(Brave/Edge use their own config roots; `install.sh` handles them on Linux.)
+
+The `manifest.json` declares the `"nativeMessaging"` permission and
+`background.js` dispatches via `chrome.runtime.connectNative("com.capauth.signer")`
+when the backend is `native-gpg`.
+
+---
+
+## Follow-ups / out of scope
+
+- **NIP-46 remote signer (phone-as-bunker).** The phone holds the key and signs
+  login requests from any device; key never touches the desktop. Transport =
+  local network or **Tailscale Funnel** when remote (DECISIONS §6 step c). This
+  is the **next** custody step after native-gpg — explicitly out of scope here.
+- **macOS / Windows native-host packaging.** `install.sh` registers the Linux
+  per-user manifest for Chrome/Chromium/Brave/Edge; macOS paths and the Windows
+  registry + `.bat` launcher are **documented** (above + in `install.sh`) but
+  not auto-installed. A signed installer / launcher is a follow-up.
+- **Hardware-token testing.** `native-gpg` supports YubiKey/smartcard *through*
+  gpg-agent (the host issues a normal `gpg --detach-sign`, gpg-agent handles
+  the touch/PIN). End-to-end testing against real hardware tokens is pending.
+- **Multi-key management.** One identity at a time; key selection / multiple
   fingerprints is not implemented.
-- **NIP-46 QR remote / cross-device signer.** No remote-signer (phone-as-signer)
-  flow — explicitly out of scope for this pass.
-- **Firefox port.** `manifest.firefox.json` exists, but the `window.capauth`
-  provider relies on MV3 content-script `"world": "MAIN"`, which Firefox handles
-  differently (use `wrappedJSObject` / `exportFunction` page injection). The
-  Firefox build needs a separate injection shim.
-- **Store publishing.** Chrome Web Store / AMO submission packaging
-  (`scripts/build.js` only bundles OpenPGP.js today; it does not assemble a
-  `dist/` tree — load-unpacked is the supported path for now).
-- **`require_origin_binding` enforcement** is a server-side config flag (Tier A
-  work); this extension always emits V2 with a client-attested origin.
+- **Firefox port.** `manifest.firefox.json` exists (now incl. `nativeMessaging`),
+  but the `window.capauth` provider relies on MV3 `"world": "MAIN"`, which Firefox
+  handles differently. The native-messaging host manifest format also differs on
+  Firefox. Needs a separate injection shim + Firefox host manifest.
+- **Store publishing.** `scripts/build.js` only bundles OpenPGP.js today;
+  load-unpacked is the supported path for now.
+- **`require_origin_binding` enforcement** is a server-side config flag (Tier A);
+  this extension always emits V2 with a client-attested origin.
