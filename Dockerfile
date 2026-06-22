@@ -13,6 +13,7 @@ COPY pyproject.toml MANIFEST.in README.md ./
 COPY src/ ./src/
 
 RUN pip install --no-cache-dir -e ".[service]"
+RUN pip install --no-cache-dir python-multipart>=0.0.6
 
 # Data directory for SQLite keystore
 RUN mkdir -p /data && chmod 777 /data
