@@ -26,6 +26,20 @@ def get_backend(backend_type: CryptoBackendType = CryptoBackendType.PGPY) -> Cry
     Raises:
         BackendError: If the requested backend is unavailable.
     """
+    if backend_type == CryptoBackendType.SEQUOIA:
+        from .sequoia_backend import SequoiaBackend
+
+        backend = SequoiaBackend()
+        if not backend.available():
+            from ..exceptions import BackendError
+
+            raise BackendError(
+                "Sequoia backend unavailable. Build sequoia-sq (pqc) and ensure "
+                "`sq` is on PATH or at ~/.cargo/bin/sq (see "
+                "memory: sequoia-pqc-backend-build)."
+            )
+        return backend
+
     if backend_type == CryptoBackendType.GNUPG:
         from .gnupg_backend import GnuPGBackend
 

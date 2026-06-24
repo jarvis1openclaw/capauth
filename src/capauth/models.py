@@ -36,11 +36,12 @@ class Algorithm(str, Enum):
     RSA4096 = "rsa4096"
 
     # --- Post-quantum stubs (declared, NOT implemented — Phase 2) ---
-    ML_KEM_768 = "ml-kem-768"                       # FIPS 203 KEM (encryption)
-    ML_DSA_65 = "ml-dsa-65"                          # FIPS 204 signature
+    ML_KEM_768 = "ml-kem-768"  # FIPS 203 KEM (encryption)
+    ML_DSA_65 = "ml-dsa-65"  # FIPS 204 signature
     HYBRID_X25519_MLKEM768 = "hybrid-x25519-mlkem768"  # OpenPGP composite alg 35 (KEM)
     HYBRID_ED25519_MLDSA65 = "hybrid-ed25519-mldsa65"  # OpenPGP composite alg 30 (sig)
-    SLH_DSA_SHAKE_256 = "slh-dsa-shake-256"          # FIPS 205 hash-based root signer
+    HYBRID_ED448_MLDSA87 = "hybrid-ed448-mldsa87"  # OpenPGP composite alg 31 (sig, L5)
+    SLH_DSA_SHAKE_256 = "slh-dsa-shake-256"  # FIPS 205 hash-based root signer
 
     @property
     def is_post_quantum(self) -> bool:
@@ -66,6 +67,7 @@ _POST_QUANTUM_ALGORITHMS: frozenset[Algorithm] = frozenset(
         Algorithm.ML_DSA_65,
         Algorithm.HYBRID_X25519_MLKEM768,
         Algorithm.HYBRID_ED25519_MLDSA65,
+        Algorithm.HYBRID_ED448_MLDSA87,
         Algorithm.SLH_DSA_SHAKE_256,
     }
 )
@@ -78,6 +80,7 @@ _ALGORITHM_SUITE_IDS: dict[Algorithm, str] = {
     Algorithm.HYBRID_X25519_MLKEM768: "x25519-mlkem768-v2",
     Algorithm.ML_DSA_65: "mldsa65-ed25519-v2",
     Algorithm.HYBRID_ED25519_MLDSA65: "mldsa65-ed25519-v2",
+    Algorithm.HYBRID_ED448_MLDSA87: "mldsa87-ed448-v2",
     Algorithm.SLH_DSA_SHAKE_256: "slh-dsa-shake-256-v2",
 }
 
@@ -87,6 +90,7 @@ class CryptoBackendType(str, Enum):
 
     PGPY = "pgpy"
     GNUPG = "gnupg"
+    SEQUOIA = "sequoia"  # PQC-capable (sq CLI); only backend that signs post-quantum
 
 
 class KeyInfo(BaseModel):
