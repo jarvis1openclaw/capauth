@@ -61,7 +61,14 @@ class PGPyBackend(CryptoBackend):
 
         Raises:
             KeyGenerationError: On any PGPy failure.
+            NotImplementedError: If a PQC stub algorithm is requested (Q0).
         """
+        if algorithm.is_post_quantum:
+            raise NotImplementedError(
+                f"PQC algorithm {algorithm.value!r} is a declared crypto-agility "
+                "stub (PQC Q0) and is not implemented in the PGPy backend. "
+                "Post-quantum keygen lands in Phase 2 (Sequoia/liboqs)."
+            )
         try:
             if algorithm == Algorithm.ED25519:
                 key = pgpy.PGPKey.new(PubKeyAlgorithm.EdDSA, EllipticCurveOID.Ed25519)

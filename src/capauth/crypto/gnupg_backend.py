@@ -88,7 +88,14 @@ class GnuPGBackend(CryptoBackend):
 
         Raises:
             KeyGenerationError: On gpg failure.
+            NotImplementedError: If a PQC stub algorithm is requested (Q0).
         """
+        if algorithm.is_post_quantum:
+            raise NotImplementedError(
+                f"PQC algorithm {algorithm.value!r} is a declared crypto-agility "
+                "stub (PQC Q0) and is not implemented in the GnuPG backend. "
+                "Post-quantum keygen lands in Phase 2 (Sequoia/liboqs)."
+            )
         gpg = self._get_gpg()
 
         if algorithm == Algorithm.ED25519:
