@@ -1334,3 +1334,39 @@ def _render_profile(p: "SovereignProfile") -> None:
     table.add_row("Signed", "Yes" if p.signature else "No")
 
     console.print(table)
+
+
+@main.command("pqc-report")
+@click.option("--format", "output_format", default="text",
+              type=click.Choice(["text", "json"]))
+@click.option("--static", is_flag=True, default=False,
+              help="Show the model-DEFAULT posture instead of the live fleet.")
+def pqc_report_cmd(output_format: str, static: bool) -> None:
+    """Show capauth's OWN PQC (quantum-resistance) posture.
+
+    capauth owns the agent/operator signing IDENTITY surface (KeyInfo.algorithm).
+    Today that is classical Ed25519 (Shor-breakable; identity signatures are NOT
+    harvest-now-decrypt-later, so this is Phase-2 work, not urgent). Delegates to
+    the sksecurity honesty engine so the claim discipline is identical — never a
+    global / end-to-end / "quantum-proof" claim.
+    """
+    import json as _json
+    try:
+        from sksecurity.pqc_report import (
+            build_project_report, format_project_report,
+        )
+    except Exception:
+        console.print(
+            "\n[yellow]sksecurity is not installed[/] — the PQC self-report "
+            "lives in sksecurity (the honesty engine).\n"
+            "Install it and re-run, or use: [cyan]sksecurity pqc-report "
+            "--project capauth[/]\n"
+        )
+        raise SystemExit(1)
+    rpt = build_project_report("capauth", live=not static)
+    if output_format == "json":
+        click.echo(_json.dumps(rpt, indent=2))
+    else:
+        # plain echo: the report contains [status] brackets that rich would
+        # mis-parse as markup tags.
+        click.echo(format_project_report(rpt))
