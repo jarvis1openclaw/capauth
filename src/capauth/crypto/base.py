@@ -114,6 +114,65 @@ class CryptoBackend(ABC):
             CapAuthError: If the armor cannot be parsed.
         """
 
+    # ------------------------------------------------------------------
+    # Hybrid post-quantum KEM hooks (PQC-MIGRATION Q1, plan §4.3).
+    #
+    # Additive + non-breaking: existing signing backends (PGPy, GnuPG) inherit
+    # the default ``NotImplementedError`` raisers below, so nothing they do
+    # changes. A future hybrid-KEM-capable backend overrides these. The live
+    # X25519+ML-KEM-768 implementation ships in ``skcomms.pqkem`` /
+    # ``skcomms.pqkem_backend`` (co-located with the wire-format contract);
+    # these hooks let capauth route KEM through the same backend abstraction.
+    # ------------------------------------------------------------------
+
+    #: Hybrid-KEM suite id this backend supports, or empty if KEM-incapable.
+    kem_suite_id: str = ""
+
+    def supports_kem(self) -> bool:
+        """Whether this backend implements the hybrid-KEM hooks.
+
+        Returns:
+            bool: True only for KEM-capable backends (default False).
+        """
+        return bool(self.kem_suite_id)
+
+    def kem_generate_keypair(self) -> tuple[bytes, bytes]:
+        """Generate a hybrid KEM keypair -> ``(public_key, private_key)``.
+
+        Raises:
+            NotImplementedError: on backends that do not support KEM.
+        """
+        raise NotImplementedError(
+            "this CryptoBackend does not support hybrid KEM; use a KEM-capable "
+            "backend (see skcomms.pqkem_backend.LiboqsHybridKemBackend)"
+        )
+
+    def kem_encapsulate(
+        self, peer_public_key: bytes, info: bytes = b""
+    ) -> tuple[bytes, bytes]:
+        """Encapsulate to ``peer_public_key`` -> ``(ciphertext, shared_secret)``.
+
+        Raises:
+            NotImplementedError: on backends that do not support KEM.
+        """
+        raise NotImplementedError(
+            "this CryptoBackend does not support hybrid KEM; use a KEM-capable "
+            "backend (see skcomms.pqkem_backend.LiboqsHybridKemBackend)"
+        )
+
+    def kem_decapsulate(
+        self, ciphertext: bytes, private_key: bytes, info: bytes = b""
+    ) -> bytes:
+        """Decapsulate ``ciphertext`` with ``private_key`` -> ``shared_secret``.
+
+        Raises:
+            NotImplementedError: on backends that do not support KEM.
+        """
+        raise NotImplementedError(
+            "this CryptoBackend does not support hybrid KEM; use a KEM-capable "
+            "backend (see skcomms.pqkem_backend.LiboqsHybridKemBackend)"
+        )
+
     def available(self) -> bool:
         """Check whether this backend's dependencies are installed.
 
