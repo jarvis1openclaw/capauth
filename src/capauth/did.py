@@ -264,12 +264,31 @@ class DIDDocumentGenerator:
                 else fp_clean.encode()
             )
             did_key_id = f"did:key:z{_b58encode(fp_bytes)}"
-            jwk = {
-                "kty": "RSA",
-                "use": "sig",
-                "key_ops": ["verify"],
-                "note": f"JWK extraction failed: {exc}",
-            }
+            algorithm = profile.key_info.algorithm
+            if getattr(algorithm, "is_post_quantum", False):
+                # A v6/RFC9580 composite PQC key (e.g. ML-DSA-87+Ed448) cannot be
+                # parsed by PGPy (v4/RSA-only) and has no settled JWK encoding yet
+                # (JOSE PQC is still in draft). Emit an HONEST descriptor that
+                # names the real algorithm and points verifiers at the OpenPGP
+                # armored key / the did:key fingerprint — never mislabel it RSA.
+                jwk = {
+                    "kty": "AKP",  # JOSE PQC draft: Algorithm Key Pair
+                    "alg": algorithm.value,
+                    "use": "sig",
+                    "key_ops": ["verify"],
+                    "note": (
+                        f"OpenPGP v6 post-quantum key ({algorithm.value}); no "
+                        "standard JWK encoding yet (JOSE PQC pending). Verify via "
+                        "publicKeyArmor or the did:key fingerprint."
+                    ),
+                }
+            else:
+                jwk = {
+                    "kty": "RSA",
+                    "use": "sig",
+                    "key_ops": ["verify"],
+                    "note": f"JWK extraction failed: {exc}",
+                }
 
         # Optional: load soul vibe + core_traits (used in Tier 2 agentCard + identity card)
         vibe: Optional[str] = None
