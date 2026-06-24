@@ -49,7 +49,7 @@ export PATH="$HOME/.skenv/bin:$PATH"
 | `src/capauth/cli.py` | Click CLI entry point — all `capauth` commands |
 | `src/capauth/profile.py` | Sovereign profile init/load/export |
 | `src/capauth/models.py` | Pydantic models: `SovereignProfile`, `ChallengeRequest`, `ChallengeResponse`, etc. |
-| `src/capauth/crypto/` | Crypto backends: `pgpy_backend.py`, `gnupg_backend.py` |
+| `src/capauth/crypto/` | Crypto backends: `pgpy_backend.py`, `gnupg_backend.py`. **Quantum-resistance:** identity is classical (Ed25519/RSA, Shor-breakable); target = hybrid ML-DSA-65+Ed25519 sigs / ML-KEM-768+X25519 KEM (additive OpenPGP composites), SLH-DSA root option. See `docs/CRYPTO_SPEC.md` → Quantum-Resistance + master plan (skchat `docs/quantum-resistance-architecture.md`), epic `PQC-MIGRATION` (coord `e1d6ba2a`). |
 | `src/capauth/pma.py` | PMA membership (Fiducia Communitatis) — request, approve, verify, revoke |
 | `src/capauth/registry.py` | `RegistryEntry`, sovereign org registry |
 | `src/capauth/mesh.py` | P2P peer mesh — `PeerMesh` |

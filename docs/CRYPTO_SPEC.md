@@ -433,6 +433,79 @@ remote_agent.verify_response(response)
 
 ---
 
+## Quantum-Resistance (post-quantum migration)
+
+**Status:** Documented requirement + target. Code lands under epic `PQC-MIGRATION`
+(coord `e1d6ba2a`). **Master plan / source of truth:**
+[skchat `docs/quantum-resistance-architecture.md`](https://github.com/smilinTux/skchat/blob/main/docs/quantum-resistance-architecture.md).
+**Ecosystem standard:** [SKStacks `docs/CRYPTOGRAPHY_STANDARD.md`](https://github.com/smilinTux/skstacks/blob/main/docs/CRYPTOGRAPHY_STANDARD.md).
+**Standards anchor:** FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA);
+RFC 9580 + draft-ietf-openpgp-pqc-17 (OpenPGP PQC composites); NIST CSWP 39 (agility).
+
+### Honest claim status
+
+CapAuth identity is **classical today**: every asymmetric key we own — the
+sovereign root, agent signing keys, the published DID public key, all PGP
+challenge-response and key-wrap — is Ed25519 / RSA-4096 and therefore
+**Shor-breakable** once a CRQC exists. Signatures are **not** retroactively
+breakable, so identity/auth migration is **real but deferrable to Phase 2** (it
+does not address Harvest-Now-Decrypt-Later). The KMS internal tree
+(`scrypt + HKDF-SHA256 + AES-256-GCM`) is symmetric/hash and **already
+quantum-acceptable** — *unless* a PGP key is wired as its master root, which would
+re-introduce a Shor-vulnerable root.
+
+**Forbidden claims** (ecosystem-wide): "quantum-proof" / "unbreakable" /
+"quantum-safe encryption" (say **"quantum-resistant"**); "end-to-end
+quantum-resistant" while any leg is classical; "CNSA 2.0 compliant" (we use the
+**-768 hybrid tier**); "FIPS 206 / Falcon" (draft). **No claim without evidence** —
+each must cite surface + FIPS # + hybrid-vs-classical, backed by the runtime
+self-report (`sksecurity status`).
+
+### Target (what CapAuth migrates to)
+
+Per draft-ietf-openpgp-pqc-17, issue **additive, reversible** composite subkeys —
+never remove the classical keys while interop is in flux:
+
+| Surface | Today | Target | Phase |
+|---|---|---|---|
+| Agent signing (`identity.py`, DID, `login.py`) | Ed25519 / RSA-4096 | **ML-DSA-65 + Ed25519** composite (OpenPGP alg 30); verify either-or in transition | 2 |
+| Sovereign root | Ed25519 / RSA-4096 | **SLH-DSA-SHAKE-256** standalone (FIPS 205, hash-only — no lattice assumption) | 2 |
+| Encryption subkey / key-wrap | PGP Curve25519 / RSA | **ML-KEM-768 + X25519** composite (OpenPGP alg 35); `K = HKDF(X25519_ss ‖ MLKEM768_ss)` | 2 (KEM helper from Phase 1) |
+| Challenge-response + DID sig | Ed25519/RSA detached | ML-DSA-65 + Ed25519 hybrid sig | 2 |
+
+New `Algorithm` enum values (additive, back-compatible — agility per CSWP 39):
+
+```python
+# capauth/models.py — Algorithm enum (new values)
+ML_KEM768_X25519 = "mlkem768-x25519"     # OpenPGP composite alg 35 (encryption)
+ML_DSA65_ED25519 = "mldsa65-ed25519"     # OpenPGP composite alg 30 (signing)
+SLH_DSA          = "slh-dsa-shake-256"   # root-of-trust hash-only signer
+```
+
+CapAuth already has the agility anchors to build on: a `crypto_backend:
+CryptoBackendType` field (`models.py:68`) and a `CryptoBackend` ABC. The migration
+**extends that pattern** — and requires moving the backend off **PGPy → Sequoia-PGP**
+(shipped PQC Nov 2025) or GopenPGP, since PGPy 0.6.0 has **no ML-KEM/ML-DSA roadmap**
+and is a dead end for PGP-surface remediation. ML-DSA sigs are ~3.3 KB (~50× Ed25519)
+— budget envelope/QR/Nostr payload sizes.
+
+### The browser / Flutter PQC gap
+
+WebCrypto has **no PQC API** in any browser (2026). Native clients (Flutter/desktop)
+get full hybrid via FFI to liboqs (ship the binary per-platform in CI); web clients
+cannot do app-layer ML-KEM natively. Surfaced as an open decision (master plan §7):
+native-only PQ now (recommended), WASM-liboqs later, or a non-Flutter client. **No
+claim may imply the browser is E2E PQ.**
+
+### Root-key rotation is a sovereign-trust event
+
+Phase 2 means generating a quantum-safe root (SLH-DSA or hybrid) and a
+rotation / cross-sign ceremony — needs Chef's real root key and a planned ritual
+(master plan §7, decision 4). Sequenced after the agility layer (Q0) and the KEM
+helper (Q1) land.
+
+---
+
 ## License
 
 **GPL-3.0-or-later** -- Cryptography should be free and auditable.
