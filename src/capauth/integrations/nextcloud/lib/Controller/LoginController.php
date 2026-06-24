@@ -349,6 +349,6 @@ class LoginController extends Controller {
     }
 
     private function isValidFingerprint(string $fp): bool {
-        return (bool) preg_match('/^[0-9A-Fa-f]{40}$/', $fp);
+        return (bool) preg_match('/^[0-9A-Fa-f]{40}$|^[0-9A-Fa-f]{64}$/', $fp);
     }
 }

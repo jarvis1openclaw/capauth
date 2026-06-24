@@ -113,7 +113,7 @@ def preferred_username_fallback(fingerprint: str) -> str:
     """Generate a stable display handle from a fingerprint when no name is asserted.
 
     Args:
-        fingerprint: Full 40-char PGP fingerprint.
+        fingerprint: Full PGP fingerprint: 40 (v4) or 64 (v6) hex.
 
     Returns:
         str: Short handle like ``capauth-8A3FC2D1``.

@@ -18,7 +18,7 @@ class KeyBundle:
     """Result of keypair generation.
 
     Attributes:
-        fingerprint: Full 40-char hex PGP fingerprint.
+        fingerprint: Full PGP fingerprint: 40 (v4) or 64 (v6) hex.
         public_armor: ASCII-armored public key block.
         private_armor: ASCII-armored private key block.
         algorithm: Algorithm used for generation.
@@ -108,7 +108,7 @@ class CryptoBackend(ABC):
             key_armor: ASCII-armored public or private key.
 
         Returns:
-            str: 40-character hex fingerprint.
+            str: 40 (v4) or 64 (v6) hex fingerprint.
 
         Raises:
             CapAuthError: If the armor cannot be parsed.
@@ -147,9 +147,7 @@ class CryptoBackend(ABC):
             "backend (see skcomms.pqkem_backend.LiboqsHybridKemBackend)"
         )
 
-    def kem_encapsulate(
-        self, peer_public_key: bytes, info: bytes = b""
-    ) -> tuple[bytes, bytes]:
+    def kem_encapsulate(self, peer_public_key: bytes, info: bytes = b"") -> tuple[bytes, bytes]:
         """Encapsulate to ``peer_public_key`` -> ``(ciphertext, shared_secret)``.
 
         Raises:
@@ -160,9 +158,7 @@ class CryptoBackend(ABC):
             "backend (see skcomms.pqkem_backend.LiboqsHybridKemBackend)"
         )
 
-    def kem_decapsulate(
-        self, ciphertext: bytes, private_key: bytes, info: bytes = b""
-    ) -> bytes:
+    def kem_decapsulate(self, ciphertext: bytes, private_key: bytes, info: bytes = b"") -> bytes:
         """Decapsulate ``ciphertext`` with ``private_key`` -> ``shared_secret``.
 
         Raises:

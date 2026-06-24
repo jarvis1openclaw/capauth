@@ -65,7 +65,7 @@ class TokenController extends Controller {
         $claims      = $envelope['claims']      ?? [];
         $claimsSig   = $envelope['claims_signature'] ?? '';
 
-        if (!preg_match('/^[0-9A-F]{40}$/', $fingerprint) || $nonce === '' || $signature === '') {
+        if (!preg_match('/^[0-9A-F]{40}$|^[0-9A-F]{64}$/', $fingerprint) || $nonce === '' || $signature === '') {
             return new JSONResponse(['error' => 'invalid_token_fields'], Http::STATUS_BAD_REQUEST);
         }
 

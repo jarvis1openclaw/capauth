@@ -325,7 +325,8 @@ class ForgejoAPIClient:
         Parameters
         ----------
         fingerprint:
-            40-char PGP fingerprint — used as the stable external identifier.
+            40 (v4) or 64 (v6) hex PGP fingerprint — used as the stable external
+            identifier.
         claims:
             OIDC claims from CapAuth (name, email, preferred_username, groups…).
 

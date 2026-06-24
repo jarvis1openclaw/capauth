@@ -64,8 +64,8 @@
     async function requestChallenge() {
         hideError(fpError);
         const fp = fpInput.value.trim().toUpperCase();
-        if (fp.length !== 40 || !/^[0-9A-F]+$/.test(fp)) {
-            showError(fpError, 'Please enter a valid 40-character hex fingerprint.');
+        if (![40, 64].includes(fp.length) || !/^[0-9A-F]+$/.test(fp)) {
+            showError(fpError, 'Please enter a valid 40- or 64-character hex fingerprint.');
             return;
         }
 
@@ -325,8 +325,8 @@
         fpRequestBtn.addEventListener('click', async function () {
             hideError(fpRequestError);
             const fp = fpRequestInput.value.trim().toUpperCase();
-            if (fp.length !== 40 || !/^[0-9A-F]+$/.test(fp)) {
-                showError(fpRequestError, 'Enter a valid 40-character fingerprint.');
+            if (![40, 64].includes(fp.length) || !/^[0-9A-F]+$/.test(fp)) {
+                showError(fpRequestError, 'Enter a valid 40- or 64-character fingerprint.');
                 return;
             }
             // Reload the page with fingerprint as query param so the provider

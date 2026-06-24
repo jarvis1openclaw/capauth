@@ -24,8 +24,9 @@ A resolved identity carries **two complementary URIs**:
     cluster.json is absent or malformed.
 
 ``fingerprint``
-    40-char PGP fingerprint from the agent's CapAuth profile.  ``None`` when
-    no real profile exists (placeholder identities are not surfaced here).
+    40 (v4) or 64 (v6) hex PGP fingerprint from the agent's CapAuth profile.
+    ``None`` when no real profile exists (placeholder identities are not
+    surfaced here).
 
 Public API
 ----------
@@ -85,8 +86,8 @@ class AgentIdentity:
         fqid:         Three-tier label — ``<agent>@<operator>.<realm>``
                       (e.g. ``"lumina@chef.skworld"``).  ``None`` when
                       cluster.json is not available.
-        fingerprint:  40-char PGP fingerprint from the agent's CapAuth
-                      profile.  ``None`` when no real profile exists.
+        fingerprint:  40 (v4) or 64 (v6) hex PGP fingerprint from the agent's
+                      CapAuth profile.  ``None`` when no real profile exists.
     """
 
     agent: str
@@ -192,7 +193,7 @@ def _load_fingerprint(agent: str) -> Optional[str]:
         agent: Short agent name.
 
     Returns:
-        40-char hex fingerprint string, or None.
+        40 (v4) or 64 (v6) hex fingerprint string, or None.
     """
     # 1. CapAuth profile.json (source of truth for real PGP profiles)
     capauth_dir = _agent_capauth_dir(agent)
@@ -201,7 +202,7 @@ def _load_fingerprint(agent: str) -> Optional[str]:
         try:
             data = json.loads(profile_path.read_text(encoding="utf-8"))
             fp = data.get("key_info", {}).get("fingerprint")
-            if isinstance(fp, str) and len(fp) == 40:
+            if isinstance(fp, str) and len(fp) in (40, 64):
                 return fp
         except (json.JSONDecodeError, OSError) as exc:
             logger.debug("profile.json parse failed for %s: %s", agent, exc)
@@ -212,7 +213,7 @@ def _load_fingerprint(agent: str) -> Optional[str]:
 
         profile = load_profile(base_dir=capauth_dir)
         fp = profile.key_info.fingerprint
-        if isinstance(fp, str) and len(fp) == 40:
+        if isinstance(fp, str) and len(fp) in (40, 64):
             return fp
     except ImportError:
         pass
@@ -226,7 +227,7 @@ def _load_fingerprint(agent: str) -> Optional[str]:
             data = json.loads(identity_path.read_text(encoding="utf-8"))
             fp = data.get("fingerprint")
             # Only return if it looks like a real fingerprint (not placeholder)
-            if isinstance(fp, str) and len(fp) == 40:
+            if isinstance(fp, str) and len(fp) in (40, 64):
                 # Reject placeholder fingerprints (all caps hex, but generated
                 # from SHA256 of "skcapstone:<name>")
                 if data.get("capauth_managed", False):

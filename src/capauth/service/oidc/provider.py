@@ -148,7 +148,7 @@ _LOGIN_PAGE = """<!DOCTYPE html>
      No password — sign the challenge to prove key possession.</p>
 
   <div class="step">1 — Your PGP fingerprint</div>
-  <label for="fp">Fingerprint (40 hex chars)</label>
+  <label for="fp">Fingerprint (40- or 64-hex chars)</label>
   <input id="fp" type="text" maxlength="50" placeholder="ABCDEF0123..." autocomplete="off"/>
 
   <div class="step">2 — Challenge nonce</div>
@@ -216,7 +216,7 @@ async function loadChallenge(fp){{
 
 document.getElementById("fp").addEventListener("blur", async function(){{
   const fp=this.value.trim().toUpperCase().replace(/\\s/g,"");
-  if(fp.length!==40){{ return; }}
+  if(![40,64].includes(fp.length)){{ return; }}
   try{{
     const ch=await loadChallenge(fp);
     currentNonce=ch.nonce; currentEcho=ch.client_nonce_echo; window._capauthCh=ch;
@@ -239,7 +239,7 @@ async function submitSig(){{
   const fp=document.getElementById("fp").value.trim().toUpperCase().replace(/\\s/g,"");
   const sig=document.getElementById("sig").value.trim();
   const pub=document.getElementById("pub").value.trim();
-  if(fp.length!==40) return setErr("Fingerprint must be 40 hex characters.");
+  if(![40,64].includes(fp.length)) return setErr("Fingerprint must be 40- or 64-hex characters.");
   if(!currentNonce) return setErr("No challenge loaded — tab out of the fingerprint field first.");
   if(!sig) return setErr("Paste your PGP signature.");
 
@@ -451,7 +451,7 @@ import { decryptPrivateKey, isEncryptedEnvelope } from "/bunker/lib/keyvault.js"
   window.capauthPhoneLogin = async function () {
     const base = window._capauthBase, reqId = window._capauthReqId, ch = window._capauthCh;
     const fp = ($("fp").value || "").trim().toUpperCase().replace(/\s/g, "");
-    if (fp.length !== 40) return err("Enter your 40-hex fingerprint first.");
+    if (![40, 64].includes(fp.length)) return err("Enter your 40- or 64-hex fingerprint first.");
     if (!ch) return err("Tab out of the fingerprint field to load a challenge first.");
     const canonical = [
       "CAPAUTH_NONCE_V1", "nonce=" + ch.nonce, "client_nonce=" + ch.client_nonce_echo,
@@ -585,7 +585,7 @@ async function loadChallenge(fp){{
 }}
 document.getElementById("fp").addEventListener("blur",async function(){{
   const fp=this.value.trim().toUpperCase().replace(/\\s/g,"");
-  if(fp.length!==40) return;
+  if(![40,64].includes(fp.length)) return;
   try{{ const ch=await loadChallenge(fp); currentNonce=ch.nonce; document.getElementById("nonce").textContent=ch.nonce;
     if(window.capauth&&window.capauth.isCapAuth){{ try{{ const res=await window.capauth.signChallenge(ch);
       document.getElementById("sig").value=res.signature; }}catch(e){{}} }}
@@ -596,7 +596,7 @@ async function enroll(){{
   const fp=document.getElementById("fp").value.trim().toUpperCase().replace(/\\s/g,"");
   const sig=document.getElementById("sig").value.trim();
   const pub=document.getElementById("pub").value.trim();
-  if(fp.length!==40) return msg("Fingerprint must be 40 hex characters.",false);
+  if(![40,64].includes(fp.length)) return msg("Fingerprint must be 40- or 64-hex characters.",false);
   if(!currentNonce) return msg("Load a challenge first (tab out of the fingerprint field).",false);
   if(!sig) return msg("Paste your PGP signature.",false);
   msg("Verifying PGP and creating passkey…",true);
@@ -639,8 +639,10 @@ def build_oidc_router(
     signing_key = signing_key or SigningKey()
     clients = clients if clients is not None else ClientRegistry()
     store = store or AuthCodeStore()
-    passkeys = passkeys if passkeys is not None else PasskeyStore(
-        data_dir=os.environ.get("CAPAUTH_DATA_DIR", "/data")
+    passkeys = (
+        passkeys
+        if passkeys is not None
+        else PasskeyStore(data_dir=os.environ.get("CAPAUTH_DATA_DIR", "/data"))
     )
 
     router = APIRouter(tags=["oidc-idp"])
@@ -780,8 +782,10 @@ def build_oidc_router(
         login_req = store.get_login_request(request_id)
         if login_req is None:
             raise HTTPException(status_code=400, detail="expired or unknown request")
-        if len(fingerprint) != 40 or not nonce_sig or not nonce_id:
-            raise HTTPException(status_code=400, detail="fingerprint, nonce, nonce_signature required")
+        if len(fingerprint) not in (40, 64) or not nonce_sig or not nonce_id:
+            raise HTTPException(
+                status_code=400, detail="fingerprint, nonce, nonce_signature required"
+            )
 
         ok, err, oidc_claims = _verify_pgp(
             fingerprint=fingerprint,
@@ -819,8 +823,10 @@ def build_oidc_router(
         nonce_sig = (body.get("nonce_signature") or "").strip()
         nonce_id = (body.get("nonce") or "").strip()
         public_key = (body.get("public_key") or "").strip()
-        if len(fingerprint) != 40 or not nonce_sig or not nonce_id:
-            raise HTTPException(status_code=400, detail="fingerprint, nonce, nonce_signature required")
+        if len(fingerprint) not in (40, 64) or not nonce_sig or not nonce_id:
+            raise HTTPException(
+                status_code=400, detail="fingerprint, nonce, nonce_signature required"
+            )
         ok, err, _claims = _verify_pgp(
             fingerprint=fingerprint,
             nonce=nonce_id,
@@ -887,7 +893,9 @@ def build_oidc_router(
         if login_req.state:
             params["state"] = login_req.state
         redirect_to = f"{login_req.redirect_uri}?{urlencode(params)}"
-        logger.info("OIDC code issued (passkey) for fp=%s client=%s", fingerprint[:8], login_req.client_id)
+        logger.info(
+            "OIDC code issued (passkey) for fp=%s client=%s", fingerprint[:8], login_req.client_id
+        )
         return {"redirect_to": redirect_to, "code": code_record.code}
 
     @router.get("/passkey/enroll", summary="Passkey enrollment page (PGP-gated)")
@@ -900,13 +908,17 @@ def build_oidc_router(
     async def passkey_js() -> Any:
         from fastapi.responses import Response
 
-        return Response(content=_PASSKEY_JS, media_type="application/javascript", headers=_JS_NO_CACHE)
+        return Response(
+            content=_PASSKEY_JS, media_type="application/javascript", headers=_JS_NO_CACHE
+        )
 
     @router.get("/bunker-login.js", summary="Sign-in-with-your-phone (bunker) helper")
     async def bunker_login_js() -> Any:
         from fastapi.responses import Response
 
-        return Response(content=_BUNKER_LOGIN_JS, media_type="application/javascript", headers=_JS_NO_CACHE)
+        return Response(
+            content=_BUNKER_LOGIN_JS, media_type="application/javascript", headers=_JS_NO_CACHE
+        )
 
     # ------------------------------------------------------------------
     # Token endpoint
@@ -981,9 +993,7 @@ def build_oidc_router(
         ):
             if key in record.claims:
                 id_claims[key] = record.claims[key]
-        id_claims.setdefault(
-            "preferred_username", preferred_username_fallback(sub)
-        )
+        id_claims.setdefault("preferred_username", preferred_username_fallback(sub))
 
         headers = {"kid": signing_key.kid}
         id_token = pyjwt.encode(
@@ -995,7 +1005,10 @@ def build_oidc_router(
         access_claims["exp"] = now + ACCESS_TOKEN_TTL
         access_claims["token_use"] = "access"
         access_token = pyjwt.encode(
-            access_claims, signing_key.private_pem, algorithm=signing_key.ALGORITHM, headers=headers
+            access_claims,
+            signing_key.private_pem,
+            algorithm=signing_key.ALGORITHM,
+            headers=headers,
         )
 
         logger.info("OIDC token issued for fp=%s client=%s", sub[:8], client_id)

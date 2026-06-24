@@ -160,7 +160,7 @@ class PgpVerificationMiddleware extends Middleware {
     }
 
     private function isValidFingerprint(string $fp): bool {
-        return (bool) preg_match('/^[0-9A-F]{40}$/', $fp);
+        return (bool) preg_match('/^[0-9A-F]{40}$|^[0-9A-F]{64}$/', $fp);
     }
 
     private function tokenWithinWindow(string $issuedAt): bool {

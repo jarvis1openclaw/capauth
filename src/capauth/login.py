@@ -108,7 +108,7 @@ def _gpg_export_pubkey(fingerprint: str) -> str:
     """Export a public key from the system GPG keyring.
 
     Args:
-        fingerprint: 40-char PGP fingerprint.
+        fingerprint: 40 (v4) or 64 (v6) hex PGP fingerprint.
 
     Returns:
         str: ASCII-armored public key.
@@ -130,7 +130,7 @@ def _fingerprint_in_gpg_keyring(fingerprint: str) -> bool:
     """Check if a fingerprint has a secret key in the system GPG keyring.
 
     Args:
-        fingerprint: 40-char PGP fingerprint.
+        fingerprint: 40 (v4) or 64 (v6) hex PGP fingerprint.
 
     Returns:
         bool: True if the key exists and can sign.

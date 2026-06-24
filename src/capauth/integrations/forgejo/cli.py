@@ -183,7 +183,9 @@ def main(args: Optional[list[str]] = None) -> int:
     sub.add_parser("ping", help="Test Forgejo API connectivity")
 
     prov = sub.add_parser("provision", help="Create or update a Forgejo user")
-    prov.add_argument("--fingerprint", required=True, help="40-char PGP fingerprint")
+    prov.add_argument(
+        "--fingerprint", required=True, help="40 (v4) or 64 (v6) hex PGP fingerprint"
+    )
     prov.add_argument("--username", required=True)
     prov.add_argument("--email", default="")
     prov.add_argument("--admin", action="store_true")

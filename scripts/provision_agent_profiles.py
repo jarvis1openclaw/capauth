@@ -78,7 +78,7 @@ def _load_existing_fingerprint(capauth_dir: Path) -> str | None:
     try:
         data = json.loads(profile_path.read_text(encoding="utf-8"))
         fp = data.get("key_info", {}).get("fingerprint")
-        if isinstance(fp, str) and len(fp) == 40:
+        if isinstance(fp, str) and len(fp) in (40, 64):
             return fp
     except Exception:
         pass
@@ -165,9 +165,7 @@ def _update_identity_json(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Print changes without writing."
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Print changes without writing.")
     parser.add_argument(
         "--agent",
         nargs="*",
@@ -209,7 +207,9 @@ def main() -> None:
                 if fingerprint:
                     print(f"  Generated fingerprint: {fingerprint}")
                 else:
-                    print(f"  [WARN] Could not generate profile; identity.json will lack fingerprint")
+                    print(
+                        f"  [WARN] Could not generate profile; identity.json will lack fingerprint"
+                    )
             else:
                 print(f"  [dry-run] Would generate new Ed25519 keypair")
                 fingerprint = None

@@ -44,7 +44,7 @@ function normalizeFingerprint(raw) {
 }
 
 function isValidFingerprint(fp) {
-  return /^[A-F0-9]{40}$/.test(fp);
+  return /^[A-F0-9]{40}$|^[A-F0-9]{64}$/.test(fp);
 }
 
 describe("Fingerprint normalisation", () => {
@@ -60,6 +60,14 @@ describe("Fingerprint normalisation", () => {
 
   it("validates correct fingerprint", () => {
     expect(isValidFingerprint("DEADBEEF1234567890ABCDEF1234567890ABCDEF")).toBe(true);
+  });
+
+  it("validates a 64-hex (v6/PQC) fingerprint", () => {
+    expect(
+      isValidFingerprint(
+        "DEADBEEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF12345678"
+      )
+    ).toBe(true);
   });
 
   it("rejects fingerprint that's too short", () => {

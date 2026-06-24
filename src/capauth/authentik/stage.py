@@ -165,9 +165,9 @@ if _AUTHENTIK_AVAILABLE:
         """
 
         fingerprint = models.CharField(
-            max_length=40,
+            max_length=64,
             primary_key=True,
-            help_text="Full 40-character uppercase PGP fingerprint.",
+            help_text="Full uppercase PGP fingerprint: 40 (v4) or 64 (v6) hex.",
         )
         public_key_armor = models.TextField(
             help_text="ASCII-armored PGP public key. Needed for signature verification.",
@@ -180,10 +180,10 @@ if _AUTHENTIK_AVAILABLE:
         )
         # Link multiple fingerprints to one identity (multi-device)
         linked_to = models.CharField(
-            max_length=40,
+            max_length=64,
             null=True,
             blank=True,
-            help_text="Primary fingerprint for multi-device identities.",
+            help_text="Primary fingerprint for multi-device identities: 40 (v4) or 64 (v6) hex.",
         )
 
         class Meta:
@@ -385,7 +385,7 @@ if _AUTHENTIK_AVAILABLE:
             """Return challenge: need_fingerprint or full nonce challenge from request.GET."""
             request = self.request
             fingerprint = (request.GET.get("fingerprint") or "").strip()
-            if not fingerprint or len(fingerprint) != 40:
+            if not fingerprint or len(fingerprint) not in (40, 64):
                 return CapAuthChallenge(
                     data={
                         "need_fingerprint": True,
@@ -454,7 +454,7 @@ if _AUTHENTIK_AVAILABLE:
 
             # Step 1: Only fingerprint submitted — issue challenge with nonce and return new challenge
             if fingerprint and not nonce_sig:
-                if len(fingerprint) != 40:
+                if len(fingerprint) not in (40, 64):
                     return self.challenge_invalid(response)
                 client_nonce_raw = os.urandom(16)
                 client_nonce_b64 = base64.b64encode(client_nonce_raw).decode("ascii")
