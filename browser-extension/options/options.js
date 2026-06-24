@@ -103,11 +103,11 @@ async function loadSettings() {
 
 function validateFingerprint(fp) {
   if (!fp) return true;
-  if (fp.length !== 40) {
-    showStatus("Fingerprint must be exactly 40 hex characters", true);
+  if (![40, 64].includes(fp.length)) {
+    showStatus("Fingerprint must be exactly 40 (v4) or 64 (v6) hex characters", true);
     return false;
   }
-  if (!/^[A-F0-9]{40}$/.test(fp)) {
+  if (!/^[A-F0-9]{40}$|^[A-F0-9]{64}$/.test(fp)) {
     showStatus("Fingerprint must contain only hex characters (0-9, A-F)", true);
     return false;
   }

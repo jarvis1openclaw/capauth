@@ -67,6 +67,7 @@ JWT_SECRET = os.environ.get("CAPAUTH_JWT_SECRET", _JWT_SECRET_DEFAULT)
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_SECONDS = 3600
 
+
 @asynccontextmanager
 async def _lifespan(application: FastAPI):  # type: ignore[type-arg]
     """Register capauth with the skcapstone fleet on service start."""
@@ -133,7 +134,7 @@ class ChallengeRequest(BaseModel):
     """Client request for a challenge nonce."""
 
     capauth_version: str = "1.0"
-    fingerprint: str = Field(description="Client's 40-char PGP fingerprint")
+    fingerprint: str = Field(description="Client's 40 (v4) or 64 (v6) hex PGP fingerprint")
     client_nonce: str = Field(description="Base64-encoded random client nonce")
     requested_service: str = Field(default="", description="Service hostname hint")
 
@@ -218,12 +219,12 @@ async def challenge_endpoint(req: ChallengeRequest) -> dict[str, Any]:
     The client must sign this nonce with their PGP private key
     and POST it back to /verify within the TTL window.
     """
-    if not req.fingerprint or len(req.fingerprint) != 40:
+    if not req.fingerprint or len(req.fingerprint) not in (40, 64):
         raise HTTPException(
             status_code=400,
             detail={
                 "error": "invalid_fingerprint",
-                "error_description": "Provide a 40-char fingerprint.",
+                "error_description": "Provide a 40 (v4) or 64 (v6) hex fingerprint.",
             },
         )
 
@@ -898,8 +899,7 @@ async def qr_login_page(request: Request) -> HTMLResponse:
     base_url = os.environ.get("CAPAUTH_BASE_URL", f"https://{SERVICE_ID}")
     redirect_to = request.query_params.get("redirect", "")
 
-    return HTMLResponse(
-        content=f"""<!DOCTYPE html>
+    return HTMLResponse(content=f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1114,8 +1114,7 @@ async def qr_login_page(request: Request) -> HTMLResponse:
     initQR();
   </script>
 </body>
-</html>"""
-    )
+</html>""")
 
 
 @app.post("/capauth/v1/qr-verify/{nonce_id}")
@@ -1258,9 +1257,7 @@ async def qr_verify_endpoint(nonce_id: str, req: VerifyRequest) -> dict[str, Any
 # never sees the private key. See bunker.py for the protocol + hardening notes.
 # ---------------------------------------------------------------------------
 
-_bunker = BunkerBroker(
-    max_sessions=int(os.environ.get("CAPAUTH_BUNKER_MAX_SESSIONS", "500"))
-)
+_bunker = BunkerBroker(max_sessions=int(os.environ.get("CAPAUTH_BUNKER_MAX_SESSIONS", "500")))
 _push = PushRegistry(data_dir=os.environ.get("CAPAUTH_DATA_DIR", "/data"))
 
 # Simple in-memory sliding-window rate limiter for POST /bunker/session, keyed by
@@ -1290,6 +1287,7 @@ def _bunker_auth_ok(request: Request) -> bool:
     header = request.headers.get("authorization", "")
     return header.startswith("Bearer ") and secrets.compare_digest(header[7:], token)
 
+
 # Directory holding the phone-signer PWA static assets.
 _PHONE_SIGNER_DIR = Path(__file__).resolve().parent.parent.parent.parent / "phone-signer"
 
@@ -1307,13 +1305,15 @@ def _broker_host(request: Optional["Request"] = None) -> str:
       2. ``CAPAUTH_BUNKER_HOST`` — a forced override / default.
       3. ``CAPAUTH_BASE_URL`` host, then ``SERVICE_ID``.
     """
-    allowed = [h.strip() for h in os.environ.get("CAPAUTH_BUNKER_HOSTS", "").split(",") if h.strip()]
+    allowed = [
+        h.strip() for h in os.environ.get("CAPAUTH_BUNKER_HOSTS", "").split(",") if h.strip()
+    ]
     if request is not None and allowed:
         cand = (
-            request.headers.get("x-forwarded-host")
-            or request.headers.get("host")
-            or ""
-        ).split(",")[0].strip()
+            (request.headers.get("x-forwarded-host") or request.headers.get("host") or "")
+            .split(",")[0]
+            .strip()
+        )
         if cand in allowed:
             return cand
     explicit = os.environ.get("CAPAUTH_BUNKER_HOST", "")

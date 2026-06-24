@@ -306,7 +306,7 @@ def fingerprint_from_armor(
         backend_type: Which crypto backend to use.
 
     Returns:
-        Optional[str]: 40-character hex fingerprint, or None on failure.
+        Optional[str]: 40 (v4) or 64 (v6) hex fingerprint, or None on failure.
     """
     try:
         backend = get_backend(backend_type)

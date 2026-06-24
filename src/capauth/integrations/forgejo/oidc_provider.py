@@ -74,8 +74,8 @@ _SIGN_PAGE_TEMPLATE = """<!DOCTYPE html>
   <p>Sign the challenge below with your PGP key to log in to <strong>{forgejo_url}</strong>.</p>
 
   <div class="step">Step 1 — Your PGP fingerprint</div>
-  <label for="fp">Fingerprint (40 hex chars)</label>
-  <input id="fp" type="text" maxlength="40" placeholder="ABCDEF1234..." autocomplete="off"/>
+  <label for="fp">Fingerprint (40 or 64 hex chars)</label>
+  <input id="fp" type="text" maxlength="64" placeholder="ABCDEF1234..." autocomplete="off"/>
 
   <div class="step">Step 2 — Challenge nonce</div>
   <div class="nonce-box" id="nonce-display">Loading challenge…</div>
@@ -115,7 +115,7 @@ async function fetchChallenge(fp) {{
 
 document.getElementById("fp").addEventListener("blur", async function() {{
   const fp = this.value.trim().toUpperCase().replace(/\\s/g, "");
-  if (fp.length !== 40) return;
+  if (![40, 64].includes(fp.length)) return;
   try {{
     const ch = await fetchChallenge(fp);
     currentNonce = ch.nonce;
@@ -131,7 +131,7 @@ async function submit() {{
   const err = document.getElementById("err");
   err.style.display = "none";
 
-  if (!fp || fp.length !== 40) {{ err.textContent = "Invalid fingerprint."; err.style.display="block"; return; }}
+  if (!fp || ![40, 64].includes(fp.length)) {{ err.textContent = "Invalid fingerprint."; err.style.display="block"; return; }}
   if (!currentNonce) {{ err.textContent = "No challenge loaded — blur the fingerprint field first."; err.style.display="block"; return; }}
   if (!sig) {{ err.textContent = "Paste your PGP signature."; err.style.display="block"; return; }}
 

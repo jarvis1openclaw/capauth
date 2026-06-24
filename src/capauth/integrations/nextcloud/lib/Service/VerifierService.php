@@ -143,7 +143,7 @@ class VerifierService {
                 $parts = explode(':', $line);
                 if (isset($parts[0], $parts[9]) && in_array($parts[0], ['pub', 'fpr'], true)) {
                     $fp = strtoupper(trim($parts[9]));
-                    if (strlen($fp) === 40) {
+                    if (strlen($fp) === 40 || strlen($fp) === 64) {
                         return $fp;
                     }
                 }

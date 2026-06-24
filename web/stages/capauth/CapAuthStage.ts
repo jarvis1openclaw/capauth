@@ -249,13 +249,13 @@ export class CapAuthStage extends BaseStage<CapAuthChallenge, Record<string, unk
 
   private onFingerprintInput = (e: Event): void => {
     const input = e.target as HTMLInputElement;
-    this.fingerprintInput = (input?.value ?? "").replace(/\s/g, "").toUpperCase().slice(0, 40);
+    this.fingerprintInput = (input?.value ?? "").replace(/\s/g, "").toUpperCase().slice(0, 64);
   };
 
   private onFingerprintSubmit = (e: SubmitEvent): void => {
     e.preventDefault();
     const fp = this.fingerprintInput.trim();
-    if (fp.length !== 40) return;
+    if (![40, 64].includes(fp.length)) return;
     void this.host?.submit({ fingerprint: fp });
   };
 

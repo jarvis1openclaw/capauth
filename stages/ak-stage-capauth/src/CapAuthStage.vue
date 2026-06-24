@@ -113,7 +113,7 @@ const fingerprint = ref("");
 const phase = ref("idle"); // idle | fetching | signing | success | error
 const error = ref("");
 
-const canSubmit = computed(() => fingerprint.value.replace(/\s/g, "").length === 40);
+const canSubmit = computed(() => [40, 64].includes(fingerprint.value.replace(/\s/g, "").length));
 
 // ---------------------------------------------------------------------------
 // Helpers

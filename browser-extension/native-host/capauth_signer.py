@@ -8,9 +8,9 @@ signing is done by gpg-agent.
 Protocol (Chrome Native Messaging — stdio, little-endian uint32 length prefix +
 UTF-8 JSON body):
 
-    -> {"op": "get_fingerprint"}                 <- {"fingerprint": "<40hex>"}
+    -> {"op": "get_fingerprint"}                 <- {"fingerprint": "<40 or 64 hex>"}
     -> {"op": "sign", "payload": "<bytes>",      <- {"signature": "<armored>"}
-        "fingerprint": "<optional 40hex>"}
+        "fingerprint": "<optional 40 or 64 hex>"}
     (any error)                                   <- {"error": "<message>"}
 
 Signing command:
@@ -41,7 +41,7 @@ import subprocess
 import sys
 
 GPG_BIN = os.environ.get("CAPAUTH_GPG_BIN", "gpg")
-FINGERPRINT_RE = re.compile(r"^[A-Fa-f0-9]{40}$")
+FINGERPRINT_RE = re.compile(r"^[A-Fa-f0-9]{40}$|^[A-Fa-f0-9]{64}$")
 MAX_PAYLOAD_BYTES = 64 * 1024  # canonical payloads are tiny; cap defensively.
 
 

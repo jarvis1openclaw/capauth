@@ -188,7 +188,7 @@ class PGPyBackend(CryptoBackend):
             key_armor: ASCII-armored public or private key.
 
         Returns:
-            str: 40-character hex fingerprint.
+            str: 40 (v4) or 64 (v6) hex fingerprint.
 
         Raises:
             BackendError: If parsing fails.

@@ -96,7 +96,7 @@ class CryptoBackendType(str, Enum):
 class KeyInfo(BaseModel):
     """Metadata about a PGP keypair."""
 
-    fingerprint: str = Field(description="Full 40-character PGP fingerprint")
+    fingerprint: str = Field(description="Full PGP fingerprint: 40 (v4) or 64 (v6) hex")
     algorithm: Algorithm = Field(default=Algorithm.ED25519)
     created: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     public_key_path: str = Field(description="Path to exported public key (.asc)")

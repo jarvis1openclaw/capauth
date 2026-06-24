@@ -24,7 +24,7 @@ DEFAULT_DB_PATH = resolve_capauth_home() / "service" / "keys.db"
 class EnrolledKey(BaseModel):
     """A PGP public key enrolled for authentication."""
 
-    fingerprint: str = Field(description="40-char uppercase PGP fingerprint")
+    fingerprint: str = Field(description="Uppercase PGP fingerprint: 40 (v4) or 64 (v6) hex")
     public_key_armor: str = Field(description="ASCII-armored PGP public key")
     enrolled_at: str = Field(description="ISO 8601 enrollment timestamp")
     last_auth: Optional[str] = Field(default=None, description="Last successful auth")
@@ -73,7 +73,7 @@ class KeyStore:
         """Look up an enrolled key by fingerprint.
 
         Args:
-            fingerprint: 40-char PGP fingerprint.
+            fingerprint: 40 (v4) or 64 (v6) hex PGP fingerprint.
 
         Returns:
             EnrolledKey or None if not enrolled.
@@ -102,7 +102,7 @@ class KeyStore:
         """Enroll a new PGP key.
 
         Args:
-            fingerprint: 40-char PGP fingerprint.
+            fingerprint: 40 (v4) or 64 (v6) hex PGP fingerprint.
             public_key_armor: ASCII-armored public key.
             approved: Whether the key is pre-approved.
 
