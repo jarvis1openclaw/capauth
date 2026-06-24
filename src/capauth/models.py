@@ -141,13 +141,51 @@ class ChallengeRequest(BaseModel):
 
 
 class ChallengeResponse(BaseModel):
-    """A signed response to an identity verification challenge."""
+    """A signed response to an identity verification challenge.
+
+    Hybrid post-quantum fields (PQC Q7 / Phase 2) are **additive + optional**:
+    a classical responder leaves them ``None`` and the classical PGP ``signature``
+    is verified exactly as before. A hybrid-capable responder ALSO attaches a
+    base64 ``skcomms.pqsig`` composite (Ed25519 + ML-DSA-65, FIPS 204) over the
+    same challenge bytes, plus the two hybrid public keys, and sets
+    ``sig_suite="mldsa65-ed25519-v2"``. The hybrid key is a **per-agent key,
+    separate from and never derived from the PGP root** — the root PGP identity
+    is NOT migrated here (that is the gated Sequoia decision).
+    """
 
     challenge_id: str = Field(description="ID of the challenge being responded to")
     challenge_hex: str = Field(description="The original challenge hex")
     signature: str = Field(description="PGP signature over the challenge bytes")
     responder_fingerprint: str = Field(description="Responder's PGP fingerprint")
     created: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # --- Hybrid PQ (additive, optional — Phase 2 / Q7) ---
+    sig_suite: str = Field(
+        default="ed25519-v1",
+        description="Signature suite id. 'ed25519-v1' (classical, default) or "
+        "'mldsa65-ed25519-v2' (hybrid Ed25519+ML-DSA-65). The classical PGP "
+        "signature is ALWAYS present for back-compat.",
+    )
+    hybrid_signature: Optional[str] = Field(
+        default=None,
+        description="base64 skcomms.pqsig composite over the challenge bytes "
+        "(set only when sig_suite is hybrid).",
+    )
+    hybrid_ed25519_pub: Optional[str] = Field(
+        default=None, description="base64 Ed25519 public key (hybrid leg)."
+    )
+    hybrid_mldsa_pub: Optional[str] = Field(
+        default=None, description="base64 ML-DSA-65 public key (hybrid leg)."
+    )
+
+    @property
+    def is_hybrid(self) -> bool:
+        """Whether a verifiable hybrid signature is attached."""
+        return (
+            self.sig_suite == "mldsa65-ed25519-v2"
+            and bool(self.hybrid_signature)
+            and bool(self.hybrid_ed25519_pub)
+            and bool(self.hybrid_mldsa_pub)
+        )
 
 
 # Django models for Authentik custom stage (loaded only when Django is available).
