@@ -110,6 +110,25 @@ class AgentIdentity:
             "fingerprint": self.fingerprint,
         }
 
+    def hybrid_prekey_available(self) -> bool:
+        """Whether this agent advertises a hybrid PQ confidentiality prekey.
+
+        Honest capability lookup for the PQC cut-over (see
+        :mod:`capauth.pqc_confidentiality`): ``True`` only when a real
+        X25519+ML-KEM-768 prekey exists for this agent; ``False`` (classical /
+        negotiated downgrade) otherwise. CapAuth does not generate these keys
+        (Phase 2) — it reports them.
+        """
+        from .pqc_confidentiality import hybrid_prekey_available
+
+        return hybrid_prekey_available(self.agent)
+
+    def confidentiality_suite(self) -> str:
+        """The confidentiality suite a peer negotiates TO this agent today."""
+        from .pqc_confidentiality import confidentiality_suite_for
+
+        return confidentiality_suite_for(self.agent)
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
