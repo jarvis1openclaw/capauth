@@ -88,7 +88,7 @@ The `sq` binary in use is a custom PQC-enabled build:
 
 **Verify the tool before trusting it:**
 ```
-sq --version          # expect 1.4.0-pqc.1 / sequoia-openpgp 2.2.0-pqc.1
+sq version            # expect 1.4.0-pqc.1 / sequoia-openpgp 2.2.0-pqc.1  (NOT `sq --version`)
 sq key generate --help | grep -A2 cipher-suite   # expect mldsa65-ed25519, mldsa87-ed448
 ```
 
@@ -153,7 +153,7 @@ additive phase is proven and stable.
 
 **Checklist (all must be true before any later phase):**
 
-1. **`sq` verified** — `sq --version` reports `1.4.0-pqc.1`; help shows
+1. **`sq` verified** — `sq version` reports `1.4.0-pqc.1`; help shows
    `mldsa87-ed448`. (Agent-safe.)
 2. **Backup of the existing identity directory.** Chef snapshots
    `~/.capauth/identity` to offline media:
@@ -231,6 +231,15 @@ sq inspect scratch-key.pgp            # note the primary fingerprint + algo
 Then exercise the additive subkey-add path against `scratch-key.pgp` until it is
 fully understood. Only graduate to the live root once the scratch run is clean.
 
+**Automated harness:** `python scripts/pqc_ceremony_dryrun.py` runs this entire
+flow on throwaway keys in an isolated temp `SEQUOIA_HOME` (touches no real key),
+proving Phases 1–3 end-to-end — generate classical v6 root → generate PQC root →
+cross-sign both directions → sign/verify continuity + tamper-reject → additive
+PQC subkey with the primary fingerprint unchanged. It prints PASS/FAIL per step
+and exits non-zero on any regression. **Run it before any live ceremony.** (The
+one path it does *not* exercise is the passphrase-protected keystore flow — that
+remains the single open item for the live run.)
+
 ### 1.2 Add PQC subkeys to the (working copy of the) classical root
 
 > ### ⛔ STOP — REQUIRES CHEF
@@ -244,11 +253,32 @@ Intended additions to the existing classical primary:
 - a **PQC encryption** subkey (ML-KEM-1024 + X448) — so the root can *receive*
   PQC-protected material.
 
-Use `sq key subkey add` against the working-copy key, selecting the desired
-capability and algorithm. (Exact subkey flags for ML-DSA/ML-KEM and the
-protected-key path are the items to confirm in 1.0/1.1; do not guess them on the
-live key.) The classical primary's own key, certification capability, and
-fingerprint **do not change** — you are only appending subkey packets.
+Use `sq key subkey add` against the working-copy key. The exact invocations are
+now **confirmed** (validated end-to-end by `scripts/pqc_ceremony_dryrun.py`, all
+PASS) — for an **unprotected** working copy:
+
+```
+# PQC signing subkey (ML-DSA-87 + Ed448)
+sq key subkey add --cert-file root-key.pgp --can-sign \
+  --cipher-suite mldsa87-ed448 --without-password --output root+sig.pgp
+
+# PQC encryption subkey (ML-KEM-1024 + X448) on top
+sq key subkey add --cert-file root+sig.pgp --can-encrypt universal \
+  --cipher-suite mldsa87-ed448 --without-password --output root+sig+kem.pgp
+```
+
+For a **passphrase-protected** primary, seed `sq`'s password cache via the
+*global* flags and protect the new subkeys with the same passphrase:
+`sq --password-file PW --batch key subkey add --cert-file … --new-password-file PW …`
+(this is exactly what `SequoiaBackend.add_pqc_subkeys()` does). The classical
+primary's own key, certification capability, and fingerprint **do not change** —
+you are only appending subkey packets.
+
+> **⚠️ v4→v6 gate.** `sq` refuses PQC algorithms on a **v4** key
+> (`can't use algorithms for v4 keys`). The existing classical root is v4-era, so
+> "additive PQC subkeys on the live root as-is" is **not possible** — re-issuing
+> the identity as a v6/RFC 9580 key is part of the Phase-3 rotation, not a pure
+> additive step. The additive path above applies to a **v6** classical key.
 
 ### 1.3 Reversibility (keep this true at all times in Phase 1)
 
@@ -371,9 +401,33 @@ So verifiers trust the new root via the old, and vice-versa:
 - **New certifies old:** use the new ML-DSA-87+Ed448 primary to certify the old
   classical primary, asserting both belong to the same sovereign identity.
 
-(Use `sq pki certify` / the appropriate certify path in this build; confirm the
-exact invocation on scratch keys first — see Phase 1.1. The cross-signing must be
-proven on disposable keys before being done with the live roots.)
+The cross-sign path in this build is **`sq pki vouch add`** (there is no
+`sq pki certify` subcommand). Confirmed working, file-based (validated by
+`scripts/pqc_ceremony_dryrun.py`):
+
+```
+# OLD certifies NEW (the load-bearing continuity link):
+sq pki vouch add --certifier-file old-root.pgp \
+  --cert-file new-root.cert --email <root-email> --output new.cert.by-old
+
+# NEW (PQC) certifies OLD (reverse direction):
+sq pki vouch add --certifier-file new-root.pgp \
+  --cert-file old-root.cert --email <root-email> --output old.cert.by-new
+```
+
+**Verify the certifications actually authenticate** (`sq inspect` does NOT verify
+them — it prints "Certifications have NOT been verified!"). Use the WoT engine
+with the certifier pinned as trust-root in an isolated home:
+
+```
+sq --home "$SCRATCH/sqhome" --keyring old-root.cert --keyring new.cert.by-old \
+   --trust-root <OLD_FPR> \
+   pki authenticate --cert <NEW_FPR> --email <root-email> --show-paths
+# → "[ ✓ ] <root-email>", exit 0; --show-paths shows the path via OLD's signature
+```
+
+Both directions authenticate `[ ✓ ]` in the dry-run. Prove on disposable keys
+(Phase 1.1 / `pqc_ceremony_dryrun.py`) before touching the live roots.
 
 ### 3.3 Transition, do not delete
 
@@ -449,7 +503,7 @@ classical root is never destroyed.
 
 ```
 # tool sanity
-sq --version
+sq version
 
 # generate hybrid v6 PQC primary (Phase 3)
 sq key generate --own-key --name N --email E \
