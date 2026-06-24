@@ -19,10 +19,67 @@ class EntityType(str, Enum):
 
 
 class Algorithm(str, Enum):
-    """Supported PGP key algorithms."""
+    """Supported PGP / identity key algorithms.
 
+    The ``ML_*`` / ``HYBRID_*`` members are **PQC Q0 crypto-agility stubs**:
+    they are *declared* so the enum (and any serialized profile/DID) can name a
+    post-quantum suite, but they are **not yet implemented**. Generating a key
+    with one of these raises ``NotImplementedError`` in the crypto backends.
+    They are wired to real algorithms in Phase 2 (Sequoia/liboqs migration).
+
+    Classical members (``ED25519``, ``RSA4096``) remain the only working
+    algorithms today. See ``docs/quantum-resistance-architecture.md`` §4.1.
+    """
+
+    # --- Classical (working today) ---
     ED25519 = "ed25519"
     RSA4096 = "rsa4096"
+
+    # --- Post-quantum stubs (declared, NOT implemented — Phase 2) ---
+    ML_KEM_768 = "ml-kem-768"                       # FIPS 203 KEM (encryption)
+    ML_DSA_65 = "ml-dsa-65"                          # FIPS 204 signature
+    HYBRID_X25519_MLKEM768 = "hybrid-x25519-mlkem768"  # OpenPGP composite alg 35 (KEM)
+    HYBRID_ED25519_MLDSA65 = "hybrid-ed25519-mldsa65"  # OpenPGP composite alg 30 (sig)
+    SLH_DSA_SHAKE_256 = "slh-dsa-shake-256"          # FIPS 205 hash-based root signer
+
+    @property
+    def is_post_quantum(self) -> bool:
+        """True for any declared-but-unimplemented PQC stub algorithm."""
+        return self in _POST_QUANTUM_ALGORITHMS
+
+    @property
+    def crypto_suite_id(self) -> str:
+        """Map this algorithm to its ``skcomms.crypto_suites`` suite id.
+
+        Lets the runtime self-report describe a capauth identity key with the
+        same suite vocabulary as envelopes/groups. Classical algorithms map to
+        their classical suite id; PQC stubs map to their (inactive) planned
+        suite id.
+        """
+        return _ALGORITHM_SUITE_IDS.get(self, "ed25519-v1")
+
+
+#: PQC algorithms that are declared but not yet implemented (Q0 scaffolding).
+_POST_QUANTUM_ALGORITHMS: frozenset[Algorithm] = frozenset(
+    {
+        Algorithm.ML_KEM_768,
+        Algorithm.ML_DSA_65,
+        Algorithm.HYBRID_X25519_MLKEM768,
+        Algorithm.HYBRID_ED25519_MLDSA65,
+        Algorithm.SLH_DSA_SHAKE_256,
+    }
+)
+
+#: Algorithm → crypto-suite id (mirrors skcomms.crypto_suites).
+_ALGORITHM_SUITE_IDS: dict[Algorithm, str] = {
+    Algorithm.ED25519: "ed25519-v1",
+    Algorithm.RSA4096: "rsa4096-v1",
+    Algorithm.ML_KEM_768: "x25519-mlkem768-v2",
+    Algorithm.HYBRID_X25519_MLKEM768: "x25519-mlkem768-v2",
+    Algorithm.ML_DSA_65: "mldsa65-ed25519-v2",
+    Algorithm.HYBRID_ED25519_MLDSA65: "mldsa65-ed25519-v2",
+    Algorithm.SLH_DSA_SHAKE_256: "slh-dsa-shake-256-v2",
+}
 
 
 class CryptoBackendType(str, Enum):
