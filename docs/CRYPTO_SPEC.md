@@ -499,7 +499,7 @@ claim may imply the browser is E2E PQ.**
 
 ### Root-key rotation is a sovereign-trust event
 
-Phase 2 means generating a quantum-safe root (SLH-DSA or hybrid) and a
+Phase 2 means generating a quantum-resistant root (SLH-DSA or hybrid) and a
 rotation / cross-sign ceremony — needs Chef's real root key and a planned ritual
 (master plan §7, decision 4). Sequenced after the agility layer (Q0) and the KEM
 helper (Q1) land.
