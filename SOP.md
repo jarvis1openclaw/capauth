@@ -188,6 +188,27 @@ deploy with Chef's real key — see [docs/ROOT_ROTATION_CEREMONY.md](docs/ROOT_R
 and [docs/PQC_ROOT_MIGRATION.md](docs/PQC_ROOT_MIGRATION.md). It is additive and
 reversible; classical keys are not removed while interop is in flux.
 
+### Front-end / Exposure
+
+Per [sk-standards `UNIFIED_INGRESS_STANDARD.md`](https://github.com/smilinTux/sk-standards/blob/main/standards/UNIFIED_INGRESS_STANDARD.md):
+
+- **Tier:** `2 SKStacks/Traefik`. The PGP-SSO bridge (`authentik-capauth` + the
+  `capauth-service` OIDC IdP, `src/capauth/service/app.py`) runs as cluster workloads on
+  SKStacks v2 / RKE2 / k3d (cap7 LIVE), Traefik label-routed, fronted by ONE
+  **Cloudflare Tunnel** — the proven **sksso** pattern (`runbooks/sksso-cloudflared-*`).
+- **Public `:443` route(s):**
+  - SSO bridge at `capauth-skstack13.skworld.io` / `capauth-skstack41.skworld.io` —
+    OIDC discovery `GET /.well-known/openid-configuration` + `GET /.well-known/jwks.json`,
+    challenge `POST /capauth/v1/challenge`, verify `POST /capauth/v1/verify`,
+    `GET /capauth/v1/status`, callback `GET /capauth/v1/callback`.
+  - Bunker remote-signer relay (CF-Tunnel **or** Tailscale Funnel) —
+    `POST /bunker/session`, `WS /bunker/ws`, and the phone PWA under `/bunker/`.
+- **Bind address:** behind the tunnel `capauth-service` listens on `:8420` as a
+  cluster-internal **ClusterIP** Service (Traefik is the only client). The standalone
+  container's default `0.0.0.0:8420` (`service/server.py`) MUST be constrained to
+  `127.0.0.1` / tailnet when not behind Traefik — **never an internet-exposed port**
+  (the tunnel is the sole ingress).
+
 ---
 
 ## 6. Configuration / Usage
