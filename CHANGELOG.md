@@ -14,6 +14,21 @@ All notable changes to `capauth` are documented here. The format is based on
   maturity tier + CRYPTOGRAPHY_STANDARD compliance line. Per the sk-standards
   `SK_REPO_DOC_STANDARD` (coord `237f38a1`).
 
+- **T3 composite root-identity path — additive + GATED** (`pqc_root_identity.py`).
+  A clearly feature-flagged path that signs/verifies a composite **ML-DSA-87 + Ed448**
+  (FIPS 204 + RFC 8032) identity attestation via the Sequoia backend. The signing
+  side is **gated closed by default** (`t3_gate_open()` ⇒ `False`;
+  `sign_identity_attestation()` raises `RootRotationGateError` before touching any
+  key material); it opens only via explicit opt-in
+  (`CAPAUTH_ALLOW_T3_COMPOSITE_ROOT=1` or `allow_gated=True`), reserved for the
+  Chef-driven rotation ceremony. The classical Ed25519/RSA root path is untouched
+  (PGPy stays the default). Hybrid = **either-leg** → quantum-resistant, never
+  "quantum-proof"; pre-RFC `draft-ietf-openpgp-pqc-17` (sig code point 31). Tier:
+  live root **T0 classical**, this path **proven-but-gated**. TDD:
+  `tests/test_pqc_t3_gate.py` (gate-default-closed + classical-untouched without
+  `sq`; composite sign→verify roundtrip + tamper/wrong-key reject with `sq`).
+  Docs: `docs/PQC_ROOT_MIGRATION.md` §5a. Epic `PQC-MIGRATION` (coord `7b1bcaee`).
+
 ### Crypto / PQC (recent, pre-changelog history)
 
 - **Honest PQC representation for v6 roots** — no false `RSA` label on a v6 PQC root.

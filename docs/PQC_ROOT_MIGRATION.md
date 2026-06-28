@@ -185,6 +185,55 @@ sq verify --signer-file CERT --signature-file SIG DATA
 
 ---
 
+## 5a. T3 composite root-identity path — additive + GATED (default closed)
+
+`src/capauth/pqc_root_identity.py` adds a **clearly feature-flagged** code path
+that can **sign and verify a composite identity attestation** with the strongest
+standards-track hybrid in the build — **ML-DSA-87 + Ed448** (`mldsa87-ed448`,
+draft sig code point 31, suite id `mldsa87-ed448-v2`), driven by
+`SequoiaBackend`. It is **additive** (the classical PGPy backend stays the
+default everywhere; `identity.py` is untouched) and **gated**.
+
+### The gate (software analogue of the ceremony's ⛔ STOP — REQUIRES CHEF)
+
+Producing a *root identity attestation* with a PQ composite key is a
+sovereign-trust event. It must not be mintable by default, so the **signing**
+side is gated **closed by default**:
+
+| API | Behaviour |
+|---|---|
+| `t3_gate_open()` | `False` unless explicitly opted in. |
+| `sign_identity_attestation(...)` | Raises `RootRotationGateError` **before touching key material** while the gate is closed. |
+| Open the gate | `CAPAUTH_ALLOW_T3_COMPOSITE_ROOT=1` (truthy env), **or** `allow_gated=True` (explicit caller override, e.g. ceremony tooling / tests). `allow_gated=False` forces closed regardless of env. |
+| `verify_identity_attestation(...)` | **Not gated** — verifying a signature never makes the root live and is always safe. |
+
+The gate stays closed until the **root-rotation ceremony**
+(`docs/ROOT_ROTATION_CEREMONY.md`) is run deliberately by Chef. Opening the env
+flag enables the *capability* on whatever key the caller supplies (in practice:
+throwaway / scratch keys) — it does **not** migrate the live root.
+
+### Honesty / tier
+
+- **Hybrid = either-leg.** The composite is unforgeable while *either* the
+  ML-DSA-87 leg **or** the Ed448 leg holds. **Quantum-resistant, not
+  "quantum-proof".**
+- **Tier:** live root = **T0 classical** (Ed25519/RSA,
+  `02BC0EB3CAD31DB691A753C70C5629AB893F9746`); this T3 composite identity path is
+  **proven-but-gated** — capability tested, gate closed, no live migration.
+- `t3_status()` returns a per-surface honest report (gate state, suite,
+  classical-root reality, FIPS/RFC anchors) for an sksecurity-style ledger entry.
+
+### Tests (`tests/test_pqc_t3_gate.py`)
+
+Gate-logic tests need no `sq` (the closed gate raises before any backend call):
+gate defaults closed; signing-while-gated raises; env + explicit overrides;
+honest `t3_status`; **classical default backend untouched** (PGPy still default,
+classical sign/verify still works). Crypto-roundtrip tests need `sq` (skipped
+otherwise): composite sign→verify roundtrip, tampered-field reject, wrong-key
+reject, protected-key path.
+
+---
+
 ## 6. Remaining work
 
 1. **Protected-key signing.** `sq sign` has **no `--password` flag**. Signing
@@ -222,6 +271,7 @@ in this build.
 | `sq` PQ keygen/sign/verify | — | ✅ verified | ML-DSA-87 + Ed448 (v6 / RFC 9580), end-to-end. |
 | Protected-key signing | — | ⏳ not yet | `sq sign` has no `--password`; keystore path TBD. |
 | Composite subkeys on root | — | ⏳ planned | Additive, reversible; design TBD. |
+| **T3 composite root-identity sig** (`pqc_root_identity.py`) | — | ✅ additive, **gated default-closed** | ML-DSA-87+Ed448 attestation sign/verify; `sign_identity_attestation` raises `RootRotationGateError` until `CAPAUTH_ALLOW_T3_COMPOSITE_ROOT`/`allow_gated`. **Proven-but-gated**; mints no live root. |
 | Per-message / DID challenge (Q7) | ✅ | ✅ additive | `skcomms.pqsig` ML-DSA-65 + Ed25519 composite; `capauth.pqc_identity`. Opt-in. Shipped — sksecurity ledger Entry #8. |
 
 **Bottom line:** the additive PQ *signing* capability exists and is tested. The
