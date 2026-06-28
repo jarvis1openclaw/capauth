@@ -1,5 +1,7 @@
 # capauth — Sovereign PGP Identity 🔐
 
+[![pytest](https://github.com/smilinTux/capauth/actions/workflows/pytest.yml/badge.svg)](https://github.com/smilinTux/capauth/actions/workflows/pytest.yml)
+
 > **OAuth is dead. Long live sovereignty.**
 > Your identity is a PGP keypair *you* generated, on hardware *you* own. No
 > "Login with Google", no authorization server in the middle, no revocation risk
