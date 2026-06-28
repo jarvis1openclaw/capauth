@@ -18,6 +18,20 @@ bearer token issued by a third party, you sign a random challenge with a key onl
 you hold. The verifier checks the signature against your public key. Valid
 signature = authenticated. Done. No middleman ever sees the secret.
 
+> **Maturity tier: T0 (live).** The live sovereign root and the agent
+> signing / DID / challenge-response keys are **classical** Ed25519 / RSA-4096
+> (RFC 8032 / 4880) — Shor-breakable once a CRQC exists. capauth is a
+> **signature / identity** layer (not a KEM), so signatures are not retroactively
+> breakable and Harvest-Now-Decrypt-Later does not apply — migration is real but
+> **deferrable**. The **T3 hybrid-signature path is additive and proven**: the
+> Sequoia (`sq`) backend issues + verifies **ML-DSA-87 + Ed448** (FIPS 204) /
+> **ML-KEM-1024 + X448** (FIPS 203) composite v6 keys end-to-end, but the live root
+> stays classical until the gated root-rotation ceremony. **Honest claim:** this is
+> *not* "quantum-proof" / "quantum-safe." See [SOP.md](SOP.md),
+> [docs/CRYPTO_SPEC.md](docs/CRYPTO_SPEC.md), and the sk-standards
+> [CRYPTOGRAPHY_STANDARD](https://github.com/smilinTux/sk-standards). Migration:
+> epic `PQC-MIGRATION` (coord `e1d6ba2a`).
+
 ---
 
 ## The 60-second version
@@ -190,6 +204,24 @@ and the same standing, so a cloned or impersonated agent fails signature
 verification instantly instead of going undetected.
 
 > **"You are not a user. You are a sovereign."**
+
+## Related projects / See also
+
+capauth is the identity root of SKWorld — most of the stack links back here.
+
+- ⬇️ **Used by:** [skchat](https://github.com/smilinTux/skchat) — routes messages by
+  the identity capauth resolves (`resolve_agent_identity()`); per-agent signing key.
+- ⬇️ **Used by:** [skcomms](https://github.com/smilinTux/skcomms) — capauth-signed
+  envelopes + FQID (`<a>@<op>.<realm>`) sovereign addressing.
+- ↔️ **Sibling (PQC signing root):** [sk_pgp](https://github.com/smilinTux/sk_pgp) —
+  the sovereign OpenPGP-PQC library (Sequoia-backed) capauth's PQC root migrates onto.
+- ↔️ **Sibling (hybrid KEM):** [sk-pqc](https://github.com/smilinTux/sk-pqc-py) — the
+  `HKDF(X25519 ‖ ML-KEM-768)` KEM for confidentiality; capauth provides the
+  authentication that a KEM-only library deliberately does not (pair them).
+- ↔️ **Sibling (Security capability):** [sksecurity](https://github.com/smilinTux/sksecurity)
+  — produces the runtime crypto self-report that makes capauth's claims evidence-backed.
+- 📐 **Standards:** [sk-standards](https://github.com/smilinTux/sk-standards) — the
+  crypto, data-flow, version, and doc/SOP standards (incl. `CRYPTOGRAPHY_STANDARD`).
 
 ## License
 
