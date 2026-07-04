@@ -14,27 +14,29 @@ All paths below are relative to this app directory:
 
 ---
 
-## ⭐ CURRENT STATUS (2026-06-22)
+## ⭐ CURRENT STATUS (2026-07-04 — re-CSR after key loss)
 
 | # | Step | State |
 |---|------|-------|
 | 0 | App Store account **`chefboyrdave2.1`** (sso + acct email both `chefboyrdave2.1@gmail.com`) — standalone account, gmail-backed (douno.it mail was offline) | ✅ exists |
 | 0 | App Store **API token** | ✅ **VERIFIED WORKING 2026-06-22** — no-token POST→401, token POST→400 "download/signature required" (authenticated). Token is a secret; rotate after first use. |
-| 1a | Code-signing keypair + CSR (`certificates/capauth.{key,csr}`, CN=`capauth`) | ✅ done; key gitignored, CSR tracked |
+| 1a | Code-signing keypair + CSR (`certificates/capauth.{key,csr}`, CN=`capauth`) | ✅ **REGENERATED 2026-07-04** (RSA-4096, modulus `8e394ab0…`). Prior 2026-06-22 key was **lost** (never stored). New private key is now in **KeePass** → `Work / CapAuth — Nextcloud App Store code-signing key` (notes + `.key`/`.csr` attachments) and at `~/.nextcloud/certificates/capauth.key`. Key gitignored, CSR tracked. |
 | — | App id `capauth` free on the store | ✅ confirmed (not in the 394 NC30 apps) |
 | 2 | `info.xml` (v0.3.0, AGPL-3.0-or-later, security+integration, NC 27–34) | ✅ **validates vs the live App Store XSD** |
 | 2 | Screenshot `screenshots/login.png` | ✅ added (real CapAuth login page, 1599×912) |
 | 3 | `build-release.sh` + `krankerl.toml` | ✅ ready |
 | 5 | GitHub Actions release CI | ✅ committed |
-| 1b | **Cert-request PR** → `nextcloud/app-certificate-requests` | ⛔ **BLOCKED**: `chefboyrdave21` has **no public email** (required) + opening a PR to a 3rd-party org needs Chef's go-ahead. PR content ready in `CSR-PR.md`. |
-| 1c | Receive + commit signed `capauth.crt` | ⬜ after 1b (Nextcloud maintainers sign manually) |
+| 1b | **Cert-request PR** → `nextcloud/app-certificate-requests` | 🔵 **READY TO RESUBMIT** — new CSR is in `CSR-PR.md`. The email blocker is resolved (PR **#1054 merged fine on Chef's account**), so the only gate is Chef opening the new PR. Same one-line change: add `capauth/capauth.csr`. |
+| 1c | Receive + commit signed `capauth.crt` | ⬜ after 1b. Old cert from #1054 was **removed** (dead — pairs with the lost key); the new merge issues a fresh `capauth.crt`. |
 | 4a | Host release tarball (GitHub release) | ⬜ after the cert (need it to sign the tarball) |
 | 4d | POST release to `/api/v1/apps/releases` | ⬜ last step (token ready) |
 
-**Critical-path blocker = the cert (step 1b/1c).** Everything else is ready. The release POST cannot
-succeed until the `capauth` code-signing cert is registered, because the store validates the tarball
-signature against it. **Next human action: set a public email on the `chefboyrdave21` GitHub profile, then
-approve submitting the cert PR.**
+**Critical-path blocker = the new cert (step 1b/1c).** Everything else is ready and the pipeline is
+already proven (#1054 merged + issued a valid cert once). The release POST cannot succeed until the
+**new** `capauth` cert is registered, because the store validates the tarball signature against it, and
+the old cert's key is gone. **Next human action: open the cert PR from `CSR-PR.md` on Chef's GitHub
+account** (public email is already set — #1054 proved it). This time the private key is safely in KeePass,
+so this can't recur.
 
 ---
 
