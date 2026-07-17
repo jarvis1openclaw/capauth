@@ -201,15 +201,34 @@ classical key is exactly as it was.
 > in the isolated working directory from Phase 0, on the **working copy** of the
 > key — never on the canonical store in place.
 
-> ### ⚠️ Capability note (must be resolved before the live run)
-> `sq sign` in this build has **no `--password` flag**. Protected-key signing
-> (and therefore protected-key editing) must go through the **`sq` keystore** or
-> another path. **Before touching the live root, confirm on a throwaway key the
-> exact subkey-add invocation that works with a passphrase-protected primary in
-> this `sq` build.** If the protected-key add path is not yet proven, **STOP and
-> resolve it first** — do not improvise on the live root. The commands below are
-> the *intended shape*; the precise protected-key flags are TBD pending that
-> investigation.
+> ### ✅ Capability note — RESOLVED (2026-07-17, throwaway rehearsal, card c061110f)
+> `sq sign` in this build has no subcommand-level `--password` flag, but the
+> **global** `--password-file FILE` (optionally with `--batch`) seeds `sq`'s
+> password cache and unlocks a passphrase-protected primary for **every**
+> operation that needs the secret key, including `key subkey add` and `sign`.
+> Proven end to end on a passphrase-protected throwaway v6 cv25519 primary
+> with sq 1.4.0-pqc.1:
+>
+> ```
+> # protected primary: add ML-DSA-87+Ed448 signing subkey
+> sq --password-file PW --batch key subkey add --cert-file root-key.pgp \
+>   --can-sign --cipher-suite mldsa87-ed448 \
+>   --new-password-file PW --output root+sig.pgp
+>
+> # then ML-KEM-1024+X448 encryption subkey on top
+> sq --password-file PW --batch key subkey add --cert-file root+sig.pgp \
+>   --can-encrypt universal --cipher-suite mldsa87-ed448 \
+>   --new-password-file PW --output root+sig+kem.pgp
+> ```
+>
+> Verified in the rehearsal: primary fingerprint unchanged, all secret
+> material (old and new packets) stays Encrypted, a wrong password is
+> rejected (`Found no suitable key`), `--batch` is optional when
+> `--password-file` is given (interactive pinentry-style prompt is the
+> default without it), and protected-key signing works with the same
+> global flags (`sq --password-file PW --batch sign --signer-file ...`).
+> Step 6 of `scripts/pqc_ceremony_dryrun.py` now regression-tests this
+> exact path. No gpg-agent preset is needed; `sq` does not use gpg-agent.
 
 ### 1.1 Dry-run on a throwaway scratch key (agent-safe — do this first)
 
@@ -236,9 +255,10 @@ flow on throwaway keys in an isolated temp `SEQUOIA_HOME` (touches no real key),
 proving Phases 1–3 end-to-end — generate classical v6 root → generate PQC root →
 cross-sign both directions → sign/verify continuity + tamper-reject → additive
 PQC subkey with the primary fingerprint unchanged. It prints PASS/FAIL per step
-and exits non-zero on any regression. **Run it before any live ceremony.** (The
-one path it does *not* exercise is the passphrase-protected keystore flow — that
-remains the single open item for the live run.)
+and exits non-zero on any regression. **Run it before any live ceremony.**
+Step 6 covers the passphrase-protected subkey-add path (global
+`--password-file`/`--batch`), so the former "protected keystore flow" open
+item is now exercised automatically as well.
 
 ### 1.2 Add PQC subkeys to the (working copy of the) classical root
 
@@ -270,7 +290,9 @@ sq key subkey add --cert-file root+sig.pgp --can-encrypt universal \
 For a **passphrase-protected** primary, seed `sq`'s password cache via the
 *global* flags and protect the new subkeys with the same passphrase:
 `sq --password-file PW --batch key subkey add --cert-file … --new-password-file PW …`
-(this is exactly what `SequoiaBackend.add_pqc_subkeys()` does). The classical
+(this is exactly what `SequoiaBackend.add_pqc_subkeys()` does). This protected
+path is **empirically proven** (2026-07-17 throwaway rehearsal + harness step 6,
+see the resolved capability note above). The classical
 primary's own key, certification capability, and fingerprint **do not change** —
 you are only appending subkey packets.
 
