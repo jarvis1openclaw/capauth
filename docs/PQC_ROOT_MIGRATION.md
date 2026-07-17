@@ -66,8 +66,15 @@ root. It can generate, sign, and verify with ML-DSA composite suites end-to-end
 
 ## 3. `sq` build provenance (reproducible)
 
-Built on **.158**. System Rust and system OpenSSL are left untouched; the build
-is isolated.
+Built on **.158**, rebuilt independently on **.41** (2026-07-17) from the
+in-repo script (redundancy: if you need one, get two). On .158, system Rust and
+system OpenSSL are left untouched; the build is isolated. On .41 the rustup
+default toolchain (`rustc 1.98.0-nightly 2026-06-27`) and system
+**OpenSSL 3.6.3** (>= 3.5, native PQ primitives) are used, because the
+linuxbrew keg there ships runtime libs only (no headers). .41 verification
+2026-07-17: `sq version` reports `1.4.0-pqc.1` / `sequoia-openpgp 2.2.0-pqc.1`
+/ backend 3.6.3; throwaway `mldsa87-ed448` v6 key generate + detached sign +
+verify PASS, tampered input rejected (`~/pqc-build/sq-smoke-41.sh`).
 
 | Item | Value |
 |------|-------|
@@ -76,9 +83,14 @@ is isolated.
 | Install cmd | `cargo install sequoia-sq --version 1.4.0-pqc.1 --locked --no-default-features --features crypto-openssl` |
 | Rust toolchain | `rustc 1.96.0` via `rustup` (system `rustc 1.75` too old; Sequoia needs ≥ 1.79) |
 | Crypto provider | linuxbrew **OpenSSL 3.6.2** (native ML-KEM / ML-DSA / SLH-DSA) |
-| Installed binary | `~/.cargo/bin/sq` |
-| Build script | `~/pqc-build/build-sq.sh` |
-| Build log | `~/pqc-build/build.log` |
+| Installed binary | `~/.cargo/bin/sq` (both nodes) |
+| Build script | **`tools/build-sq.sh` in this repo (canonical)**; `~/pqc-build/build-sq.sh` on .158 is the historical original |
+| Build log | `~/pqc-build/build.log` (.158), `~/pqc-build/build-41.log` (.41) |
+
+The in-repo `tools/build-sq.sh` is the source of truth. It autodetects the
+OpenSSL prefix (pinned linuxbrew keg when complete, else system OpenSSL with a
+hard >= 3.5 version gate) and accepts `OSSL`, `SQ_VERSION`, `CARGO_BUILD_JOBS`,
+`CARGO_TARGET_DIR`, and `CARGO_INSTALL_ROOT` overrides.
 
 ### Build environment
 
@@ -89,10 +101,17 @@ PKG_CONFIG_PATH=$OPENSSL_DIR/lib/pkgconfig
 CARGO_TARGET_DIR=~/pqc-build/target
 ```
 
-### Build dependencies (apt)
+**bindgen/libclang gotcha (.41):** the locked `bindgen 0.71.1` emits opaque
+structs against libclang >= 22 (`ossl` crate fails with E0080 layout errors,
+`ossl_param_st` has only `_address`). Fix: install a versioned clang (Arch:
+`clang18`) and set `LIBCLANG_PATH=/usr/lib/llvm18/lib`. `tools/build-sq.sh`
+autodetects this.
+
+### Build dependencies
 
 ```
-pkg-config  capnproto  clang  libsqlite3-dev  patchelf
+apt:    pkg-config  capnproto  clang  libsqlite3-dev  patchelf
+pacman: pkgconf     capnproto  clang  sqlite          (patchelf only for non-system OpenSSL)
 ```
 
 ### Runtime durability (rpath)

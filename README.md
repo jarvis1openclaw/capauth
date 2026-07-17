@@ -140,6 +140,31 @@ all Syncthing mesh nodes so every host shares one keypair.
 | **Integration generators** | One-shot config for third-party login, e.g. Forgejo OAuth2/OIDC (`capauth setup forgejo`) |
 | **skcapstone adapter** | Default-on-by-presence: routes auth events to `sk-alert`, registers a key-rotation check with `skscheduler` |
 
+### Challenge TTL and replay contract (`identity.verify_challenge`)
+
+`verify_challenge` enforces a **max challenge age of 5 minutes by default**
+(`DEFAULT_MAX_CHALLENGE_AGE_SECONDS = 300`); older challenges raise
+`ChallengeExpiredError`. Tune it with `max_age_seconds=...`, or pass
+`max_age_seconds=None` to opt out **only** when your layer enforces TTL
+itself (the service layer does, via its nonce store).
+
+**Within the TTL the bare primitive is replayable**: the same signed
+response verifies repeatedly unless you track seen challenge ids. For
+single-use semantics pass a `replay_guard`:
+
+```python
+from capauth.identity import InMemoryReplayGuard, verify_challenge
+
+guard = InMemoryReplayGuard()  # single-process reference implementation
+verify_challenge(challenge, response, pubkey, replay_guard=guard)
+verify_challenge(challenge, response, pubkey, replay_guard=guard)  # raises ChallengeReplayError
+```
+
+Any `(challenge_id, expires_at) -> bool` callable works as a guard. For
+durable / multi-node deployments use a real nonce store; the reference
+implementation is `capauth.authentik.nonce_store.NonceStore` (what the
+verification service uses).
+
 ## Key CLI commands
 
 ```bash

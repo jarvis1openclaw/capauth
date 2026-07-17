@@ -17,6 +17,41 @@ class VerificationError(CapAuthError):
     """Raised when identity verification (challenge-response) fails."""
 
 
+class ChallengeExpiredError(VerificationError):
+    """Raised when a challenge is older than the allowed max age.
+
+    Subclass of VerificationError so existing callers that catch
+    VerificationError keep working unchanged.
+    """
+
+
+class ChallengeReplayError(VerificationError):
+    """Raised when a challenge response is presented more than once.
+
+    Only raised when the caller supplies a replay_guard to
+    verify_challenge; the bare primitive does NOT track single-use.
+    Subclass of VerificationError for back-compat.
+    """
+
+
+class KeyRevokedError(VerificationError):
+    """Raised when the signer's key (or signing subkey) carries a revocation signature.
+
+    Distinct from a bad signature: the crypto may be valid, but the key
+    was explicitly revoked and must never authenticate. Subclass of
+    VerificationError so existing callers keep working unchanged.
+    """
+
+
+class KeyExpiredError(VerificationError):
+    """Raised when the signer's key (or signing subkey) has expired.
+
+    Distinct from a bad signature: the crypto may be valid, but the key
+    material is past its declared expiration and must not authenticate.
+    Subclass of VerificationError for back-compat.
+    """
+
+
 class ProfileError(CapAuthError):
     """Raised for sovereign profile creation or loading issues."""
 
