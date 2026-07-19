@@ -515,6 +515,8 @@ class DIDDocumentGenerator:
             ],
             "authentication": [vm_id],
             "assertionMethod": [vm_id],
+            "capabilityInvocation": [vm_id],
+            "capabilityDelegation": [vm_id],
         }
 
     def _generate_mesh_did(
@@ -564,6 +566,8 @@ class DIDDocumentGenerator:
             ],
             "authentication": [vm_id],
             "assertionMethod": [vm_id],
+            "capabilityInvocation": [vm_id],
+            "capabilityDelegation": [vm_id],
             "service": [
                 {
                     "id": f"{did_id}#messaging",
@@ -619,6 +623,11 @@ class DIDDocumentGenerator:
             ],
             "authentication": [vm_id],
             "assertionMethod": [vm_id],
+            # The agency axis: this key may invoke and delegate capabilities.
+            # The relationships are declared; the capability list itself stays
+            # Tier 2 — a public resolver learns THAT the key has agency, not what over.
+            "capabilityInvocation": [vm_id],
+            "capabilityDelegation": [vm_id],
             # Minimal public metadata — no mesh details, no capabilities
             "skworld:entityType": ctx.entity_type,
             "skworld:name": ctx.name,
