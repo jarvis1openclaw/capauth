@@ -16,9 +16,48 @@ from pgpy.constants import (
     SymmetricKeyAlgorithm,
 )
 
-from ..exceptions import BackendError, KeyGenerationError
+from ..exceptions import BackendError, KeyExpiredError, KeyGenerationError, KeyRevokedError
 from ..models import Algorithm
 from .base import CryptoBackend, KeyBundle
+
+
+def _assert_key_usable(pub_key: "pgpy.PGPKey", signer_keyids: set[str]) -> None:
+    """Reject revoked or expired key material before signature checks.
+
+    PGPy performs neither revocation nor expiry checks natively (its
+    source carries a literal 'TODO: Revocation checks'), so we inspect
+    the key material ourselves: revocation signatures attached to the
+    primary key or to the signing subkey that produced the signature,
+    and key or signing-subkey expiration.
+
+    Args:
+        pub_key: Parsed public key (primary, with subkeys).
+        signer_keyids: 16-hex key IDs that produced the signature(s)
+            being verified. Used to scope subkey checks to the actual
+            signer so an unrelated revoked/expired encryption subkey
+            does not block primary-key signatures.
+
+    Raises:
+        KeyRevokedError: Revocation signature present on the primary
+            key or on the signing subkey.
+        KeyExpiredError: Primary key or signing subkey is expired.
+    """
+    fingerprint = str(pub_key.fingerprint).replace(" ", "")
+
+    for _rev in pub_key.revocation_signatures:
+        raise KeyRevokedError(f"Key {fingerprint} carries a revocation signature")
+    if pub_key.is_expired:
+        raise KeyExpiredError(f"Key {fingerprint} is expired (expired {pub_key.expires_at})")
+
+    for keyid, subkey in pub_key.subkeys.items():
+        if signer_keyids and keyid not in signer_keyids:
+            continue
+        for _rev in subkey.revocation_signatures:
+            raise KeyRevokedError(
+                f"Signing subkey {keyid} of key {fingerprint} carries a revocation signature"
+            )
+        if signer_keyids and keyid in signer_keyids and subkey.is_expired:
+            raise KeyExpiredError(f"Signing subkey {keyid} of key {fingerprint} is expired")
 
 
 class PGPyBackend(CryptoBackend):
@@ -161,11 +200,27 @@ class PGPyBackend(CryptoBackend):
 
         Returns:
             bool: True if the signature is cryptographically valid.
+
+        Raises:
+            KeyRevokedError: The signer's key (or signing subkey) is revoked.
+            KeyExpiredError: The signer's key (or signing subkey) is expired.
         """
         try:
             pub_key, _ = pgpy.PGPKey.from_blob(public_key_armor)
             signed_msg = pgpy.PGPMessage.from_blob(signature_armor)
+        except Exception:
+            return False
 
+        # Reason: PGPy does not implement revocation/expiry checks, so a
+        # revoked or expired key would otherwise verify fine. Reject the
+        # key material first, with distinct errors, before touching crypto.
+        try:
+            signer_keyids = {sig.signer for sig in signed_msg.signatures}
+        except Exception:
+            signer_keyids = set()
+        _assert_key_usable(pub_key, signer_keyids)
+
+        try:
             # Reason: PGPy verifies the embedded payload, so we must
             # also confirm the embedded data matches what we expect
             # to prevent a substitution attack. PGPy returns .message

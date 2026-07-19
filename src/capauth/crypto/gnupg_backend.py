@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from ..exceptions import BackendError, KeyGenerationError
+from ..exceptions import BackendError, KeyExpiredError, KeyGenerationError, KeyRevokedError
 from ..models import Algorithm
 from .base import CryptoBackend, KeyBundle
 
@@ -167,7 +167,9 @@ class GnuPGBackend(CryptoBackend):
 
         try:
             import_result = gpg.import_keys(private_key_armor)
-            if not import_result.ok:
+            # Reason: python-gnupg's ImportResult has no .ok attribute;
+            # the reliable success signal is a non-empty fingerprint list.
+            if not import_result.fingerprints:
                 raise BackendError(f"Failed to import private key: {import_result.stderr}")
 
             fingerprint = import_result.fingerprints[0]
@@ -199,6 +201,10 @@ class GnuPGBackend(CryptoBackend):
 
         Returns:
             bool: True if valid.
+
+        Raises:
+            KeyRevokedError: The signing key was revoked (gpg REVKEYSIG).
+            KeyExpiredError: The signing key has expired (gpg EXPKEYSIG).
         """
         gpg = self._get_gpg()
 
@@ -218,7 +224,19 @@ class GnuPGBackend(CryptoBackend):
             Path(sig_path).unlink(missing_ok=True)
             Path(data_path).unlink(missing_ok=True)
 
+            # Reason: gpg reports revoked/expired signer keys via
+            # REVKEYSIG/EXPKEYSIG, which python-gnupg surfaces as
+            # key_status. Raise distinct errors so callers can tell
+            # revoked and expired apart from a plain bad signature.
+            key_status = getattr(verified, "key_status", None) or ""
+            if "revoked" in key_status:
+                raise KeyRevokedError(f"Signing key rejected by gpg: {key_status}")
+            if "expired" in key_status:
+                raise KeyExpiredError(f"Signing key rejected by gpg: {key_status}")
+
             return bool(verified.valid)
+        except (KeyRevokedError, KeyExpiredError):
+            raise
         except Exception:
             return False
 

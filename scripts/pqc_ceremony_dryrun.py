@@ -16,6 +16,10 @@ depends on:
   5. Additive path: add an ML-DSA-87+Ed448 signing subkey to the classical v6
      key (``sq key subkey add``) and confirm the primary fingerprint is
      UNCHANGED, and the additive key can still sign/verify.
+  6. PROTECTED-KEY path (former Phase-1 STOP): passphrase-protected v6
+     primary + both PQC subkeys added via global ``--password-file --batch``;
+     fingerprint unchanged, secrets stay Encrypted, wrong password rejected,
+     protected key still signs/verifies.
 
 SAFETY: touches NO real key. Everything happens in a fresh ``tempfile.mkdtemp``
 (override with ``--workdir``). An isolated ``SEQUOIA_HOME`` is created inside the
@@ -257,6 +261,91 @@ class Ceremony:
             f"sign_verify={sign_ok}",
         )
 
+    def step6_protected_subkey(self) -> bool:
+        """PROTECTED-KEY path (the former Phase-1 STOP): generate a
+        passphrase-protected classical v6 primary, add ML-DSA-87+Ed448 signing
+        and ML-KEM-1024+X448 encryption subkeys via the global
+        ``--password-file``/``--batch`` flags, confirm the fingerprint is
+        unchanged, all secret material stays Encrypted, a WRONG password is
+        rejected, and the protected key still signs/verifies."""
+        name = "6. Protected-key PQC subkey add (--password-file)"
+        pw = self._path("scratch.pw")
+        Path(pw).write_text("throwaway-rehearsal-passphrase")
+        badpw = self._path("scratch.badpw")
+        Path(badpw).write_text("wrong-password")
+        try:
+            self._run([
+                "key", "generate", "--own-key",
+                "--email", "protected@test.invalid",
+                "--cipher-suite", "cv25519", "--profile", "rfc9580",
+                "--new-password-file", pw,
+                "--output", self._path("prot.pgp"),
+                "--rev-cert", self._path("prot.rev.pgp"),
+            ])
+            fpr_before = self._primary_fpr(
+                self._run(["inspect", self._path("prot.pgp")]).stdout)
+            # proven invocation: global --password-file + --batch,
+            # new subkeys protected with the same passphrase
+            self._run([
+                "--password-file", pw, "--batch",
+                "key", "subkey", "add",
+                "--cert-file", self._path("prot.pgp"),
+                "--can-sign", "--cipher-suite", "mldsa87-ed448",
+                "--new-password-file", pw,
+                "--output", self._path("prot+sig.pgp"),
+            ])
+            self._run([
+                "--password-file", pw, "--batch",
+                "key", "subkey", "add",
+                "--cert-file", self._path("prot+sig.pgp"),
+                "--can-encrypt", "universal",
+                "--cipher-suite", "mldsa87-ed448",
+                "--new-password-file", pw,
+                "--output", self._path("prot+sig+kem.pgp"),
+            ])
+            ins = self._run(
+                ["inspect", self._path("prot+sig+kem.pgp")]).stdout
+        except subprocess.CalledProcessError as e:
+            return self._record(name, False, e.stderr.strip())
+        unchanged = self._primary_fpr(ins) == fpr_before
+        has_sig = "ML-DSA-87+Ed448" in ins
+        has_kem = "ML-KEM-1024+X448" in ins
+        all_encrypted = ("Unencrypted" not in ins
+                         and ins.count("Encrypted") >= 6)
+        # negative control: wrong password must be rejected
+        bad = self._run([
+            "--password-file", badpw, "--batch",
+            "key", "subkey", "add",
+            "--cert-file", self._path("prot.pgp"),
+            "--can-sign", "--cipher-suite", "mldsa87-ed448",
+            "--new-password-file", pw,
+            "--output", self._path("prot.should-fail.pgp"),
+        ], check=False)
+        wrong_pw_rejected = bad.returncode != 0
+        # protected key still signs (sign needs the password too)
+        self._derive_cert("prot+sig+kem.pgp", "prot.cert")
+        data = self._path("prot_msg.txt")
+        Path(data).write_text("protected-key payload\n")
+        sig = self._path("prot_msg.sig")
+        sign = self._run([
+            "--password-file", pw, "--batch",
+            "sign", "--signer-file", self._path("prot+sig+kem.pgp"),
+            "--signature-file", sig, data,
+        ], check=False)
+        verify = self._run([
+            "verify", "--signer-file", self._path("prot.cert"),
+            "--signature-file", sig, data,
+        ], check=False)
+        sign_ok = sign.returncode == 0 and verify.returncode == 0
+        ok = (unchanged and has_sig and has_kem and all_encrypted
+              and wrong_pw_rejected and sign_ok)
+        return self._record(
+            name, ok,
+            f"primary_unchanged={unchanged} sig_subkey={has_sig} "
+            f"kem_subkey={has_kem} secrets_encrypted={all_encrypted} "
+            f"wrong_pw_rejected={wrong_pw_rejected} sign_verify={sign_ok}",
+        )
+
     # -- driver -------------------------------------------------------------
     def run(self) -> bool:
         old_fpr = self.step1_old_classical()
@@ -272,6 +361,7 @@ class Ceremony:
         else:
             self._record("5. Additive PQC subkey (classical v6)", False,
                          "skipped: step 1 failed")
+        self.step6_protected_subkey()
         return all(r.passed for r in self.results)
 
 
