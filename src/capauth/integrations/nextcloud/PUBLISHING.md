@@ -14,29 +14,49 @@ All paths below are relative to this app directory:
 
 ---
 
-## ⭐ CURRENT STATUS (2026-07-04 — re-CSR after key loss)
+## ✅ PUBLISHED — LIVE (2026-07-20)
+
+**CapAuth 0.3.0 is live on the App Store: <https://apps.nextcloud.com/apps/capauth>**
+(page returns HTTP 200; the store lists `capauth` / "CapAuth" with release `0.3.0`).
+
+The full publish chain is DONE and the pipeline is proven end to end:
 
 | # | Step | State |
 |---|------|-------|
-| 0 | App Store account **`chefboyrdave2.1`** (sso + acct email both `chefboyrdave2.1@gmail.com`) — standalone account, gmail-backed (douno.it mail was offline) | ✅ exists |
-| 0 | App Store **API token** | ✅ **VERIFIED WORKING 2026-06-22** — no-token POST→401, token POST→400 "download/signature required" (authenticated). Token is a secret; rotate after first use. |
-| 1a | Code-signing keypair + CSR (`certificates/capauth.{key,csr}`, CN=`capauth`) | ✅ **REGENERATED 2026-07-04** (RSA-4096, modulus `8e394ab0…`). Prior 2026-06-22 key was **lost** (never stored). New private key is now in **KeePass** → `Work / CapAuth — Nextcloud App Store code-signing key` (notes + `.key`/`.csr` attachments) and at `~/.nextcloud/certificates/capauth.key`. Key gitignored, CSR tracked. |
-| — | App id `capauth` free on the store | ✅ confirmed (not in the 394 NC30 apps) |
-| 2 | `info.xml` (v0.3.0, AGPL-3.0-or-later, security+integration, NC 27–34) | ✅ **validates vs the live App Store XSD** |
-| 2 | Screenshot `screenshots/login.png` | ✅ added (real CapAuth login page, 1599×912) |
-| 3 | `build-release.sh` + `krankerl.toml` | ✅ ready |
-| 5 | GitHub Actions release CI | ✅ committed |
-| 1b | **Cert-request PR** → `nextcloud/app-certificate-requests` | 🔵 **READY TO RESUBMIT** — new CSR is in `CSR-PR.md`. The email blocker is resolved (PR **#1054 merged fine on Chef's account**), so the only gate is Chef opening the new PR. Same one-line change: add `capauth/capauth.csr`. |
-| 1c | Receive + commit signed `capauth.crt` | ⬜ after 1b. Old cert from #1054 was **removed** (dead — pairs with the lost key); the new merge issues a fresh `capauth.crt`. |
-| 4a | Host release tarball (GitHub release) | ⬜ after the cert (need it to sign the tarball) |
-| 4d | POST release to `/api/v1/apps/releases` | ⬜ last step (token ready) |
+| 0 | App Store account | ✅ `chefboyrdave2.1` (**login username = the EMAIL `chefboyrdave2.1@gmail.com`**, not the short handle — see gotcha #2). Password reset 2026-07-20; new pw + API token in skvault entry **`Nextcloud App Store (apps.nextcloud.com)`**. |
+| 0 | App Store **API token** | ✅ generated at *My account → API-Token* 2026-07-20. Secret; stored in skvault + repo secret `NEXTCLOUD_APPSTORE_TOKEN`. |
+| 1a | Code-signing keypair + CSR (CN=`capauth`, RSA-4096, modulus `8e394ab0…`) | ✅ key in KeePass + `~/.nextcloud/certificates/capauth.key`; also repo secret `NEXTCLOUD_APP_SIGNING_KEY`. |
+| 1b | Cert-request PR → `nextcloud/app-certificate-requests` | ✅ **#1054 MERGED 2026-06-29** (approved). |
+| 1c | Signed `capauth.crt` | ✅ at `~/.nextcloud/certificates/capauth.crt` (valid Jul 2026 → Oct 2036, modulus matches key). |
+| 2 | `info.xml` (v0.3.0) + screenshot | ✅ validates vs XSD; screenshot HTTP 200. |
+| 1d | **Register app id** `POST /api/v1/apps` | ✅ **HTTP 201** — see gotcha #1: this is a REQUIRED explicit step, NOT implicit. |
+| 4a | Host release tarball (GitHub release) | ✅ tag `nextcloud-v0.3.0` on `smilinTux/capauth` (asset download URL HTTP 200). |
+| 4b | Sign tarball (base64 SHA-512) | ✅ |
+| 4d | Create release `POST /api/v1/apps/releases` | ✅ **HTTP 201**. |
+| 5 | CI auto-publish on `nextcloud-v*` tag | ✅ repo secrets `NEXTCLOUD_APPSTORE_TOKEN` + `NEXTCLOUD_APP_SIGNING_KEY` set 2026-07-21. Future releases auto-publish. |
 
-**Critical-path blocker = the new cert (step 1b/1c).** Everything else is ready and the pipeline is
-already proven (#1054 merged + issued a valid cert once). The release POST cannot succeed until the
-**new** `capauth` cert is registered, because the store validates the tarball signature against it, and
-the old cert's key is gone. **Next human action: open the cert PR from `CSR-PR.md` on Chef's GitHub
-account** (public email is already set — #1054 proved it). This time the private key is safely in KeePass,
-so this can't recur.
+### ⚠️ Gotchas learned during the real publish (2026-07-20) — READ THESE
+
+1. **The app id is NOT auto-registered on first release.** The old note in this
+   SOP (§1d) that "the first authenticated release POST claims the id" was WRONG.
+   `POST /api/v1/apps/releases` returns `400 ["App capauth does not exist, you
+   need to register it first"]`. You MUST first `POST /api/v1/apps` with the
+   certificate **and a signature of the app-id STRING** (`printf 'capauth' |
+   openssl dgst -sha512 -sign capauth.key | openssl base64 -A`). Signing the cert
+   body instead gives `400 ["Signature is invalid"]`. Correct call returns `201`.
+   This is a one-time step per app; it's done for `capauth`, so CI only needs the
+   release POST going forward.
+2. **Login username is the account EMAIL** (`chefboyrdave2.1@gmail.com`), not the
+   short handle `chefboyrdave2.1`. Logging in with the short handle gives
+   "username and/or password not correct" and, after a few tries, "Too many
+   failed login attempts. Try again later." (~15 min lockout).
+3. **Password reset URL** is `https://apps.nextcloud.com/password/reset/`
+   (the `/account/password/reset/` path 404s). The reset email lands on
+   `chefboyrdave2.1@gmail.com` with a `/password/reset/key/<token>/` link.
+
+Nothing is blocking. This section is retained as the proven runbook for the next
+release (and for publishing other SK apps to the store — see the sk-standards
+reference).
 
 ---
 
@@ -127,13 +147,31 @@ git commit -m "nextcloud: add signed App Store certificate"
 The CI workflow reads `certificates/capauth.crt` from the repo and the private
 key from the `NEXTCLOUD_APP_SIGNING_KEY` secret (step 5).
 
-### 1d. Register the app id  🔵  — **NEEDS CHEF'S NEXTCLOUD ACCOUNT**
+### 1d. Register the app id  ⚙️🔑  — **REQUIRED, explicit, one-time**
 
-The app id is implicitly registered the **first time you create a release** for
-it (step 4) using your account's API token, *provided* the cert from 1c is
-issued and the `info.xml` `<id>` matches the cert CN (`capauth`). There is no
-separate "register app" form to fill in beyond having the certificate; the
-first authenticated release POST claims the id to your account.
+> ⚠️ **Corrected 2026-07-20.** This is NOT implicit. `POST /api/v1/apps/releases`
+> fails with `400 ["App capauth does not exist, you need to register it first"]`
+> until you have explicitly registered the id. Do this once per app.
+
+Register by POSTing the certificate plus a signature **of the app-id string**
+(not the cert body — that gives `400 ["Signature is invalid"]`):
+
+```bash
+APP_ID=capauth
+KEY=~/.nextcloud/certificates/${APP_ID}.key
+CERT=~/.nextcloud/certificates/${APP_ID}.crt
+ID_SIG=$(printf '%s' "$APP_ID" | openssl dgst -sha512 -sign "$KEY" | openssl base64 -A)
+
+curl -sS -X POST https://apps.nextcloud.com/api/v1/apps \
+  -H "Authorization: Token ${NEXTCLOUD_APPSTORE_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg c "$(cat "$CERT")" --arg s "$ID_SIG" \
+        '{certificate:$c, signature:$s}')"
+# => HTTP 201 (registered).  Already done for `capauth`.
+```
+
+Requires the cert from 1c and that `info.xml` `<id>` matches the cert CN
+(`capauth`). After this, `POST /api/v1/apps/releases` (step 4d) succeeds.
 
 ---
 
