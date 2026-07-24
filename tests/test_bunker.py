@@ -322,3 +322,142 @@ def test_ws_endpoint_rejects_bad_secret():
         msg = ws.receive_json()
         assert msg["type"] == "error"
         assert msg["code"] == "bad_pairing_secret"
+
+
+# --- session persistence / restart survivability ----------------------------
+#
+# Card 3db2c81d: an approved bunker pairing session must survive a service
+# restart so clients do not have to re-pair. These prove: a session survives a
+# simulated restart (fresh broker over the same store), expired sessions are not
+# reloaded, a corrupt/missing store does not crash the broker, the store file is
+# mode 0600, and the replay guard (seen_ids) also survives the restart.
+
+
+def test_session_survives_restart(tmp_path):
+    store = tmp_path / "bunker_sessions.json"
+    broker1 = BunkerBroker(store_path=store)
+    created = broker1.create_session()
+    sid, secret = created["session_id"], created["pairing_secret"]
+
+    # Simulate a restart: a brand-new broker pointed at the same store.
+    broker2 = BunkerBroker(store_path=store)
+    reloaded = broker2.get_session(sid)
+    assert reloaded is not None, "session should survive the restart"
+
+    # And it is still USABLE: both peers can (re)pair with the same secret and
+    # relay a round-trip through the reloaded session.
+    cws, sws = FakeWS(), FakeWS()
+    assert run(broker2.join(sid, ROLE_CLIENT, secret, cws)) is None
+    assert run(broker2.join(sid, ROLE_SIGNER, secret, sws)) is None
+    assert reloaded.is_paired
+    err = run(broker2.relay(sid, ROLE_CLIENT, {"type": "sign_request", "id": "r1"}))
+    assert err is None
+    assert sws.sent[-1]["type"] == "sign_request"
+
+
+def test_wrong_secret_still_rejected_after_restart(tmp_path):
+    store = tmp_path / "bunker_sessions.json"
+    b1 = BunkerBroker(store_path=store)
+    sid = b1.create_session()["session_id"]
+    b2 = BunkerBroker(store_path=store)
+    # A reloaded session must keep enforcing its pairing secret.
+    assert run(b2.join(sid, ROLE_CLIENT, "not-the-secret", FakeWS())) == "bad_pairing_secret"
+
+
+def test_expired_sessions_not_reloaded(tmp_path):
+    import json
+    import time
+
+    store = tmp_path / "bunker_sessions.json"
+    now = time.time()
+    store.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "sessions": [
+                    {  # expired: created long ago, past its TTL
+                        "session_id": "old",
+                        "pairing_secret": "s1",
+                        "ttl_seconds": 300,
+                        "created_at": now - 10_000,
+                        "seen_ids": [],
+                    },
+                    {  # fresh: well within TTL
+                        "session_id": "new",
+                        "pairing_secret": "s2",
+                        "ttl_seconds": 300,
+                        "created_at": now,
+                        "seen_ids": [],
+                    },
+                ],
+            }
+        )
+    )
+    broker = BunkerBroker(store_path=store)
+    assert broker.get_session("old") is None
+    assert broker.get_session("new") is not None
+
+
+def test_corrupt_store_does_not_crash(tmp_path):
+    store = tmp_path / "bunker_sessions.json"
+    store.write_text("{ this is not valid json ]]]")
+    broker = BunkerBroker(store_path=store)  # must not raise
+    # Starts empty and remains fully functional.
+    created = broker.create_session()
+    assert broker.get_session(created["session_id"]) is not None
+
+
+def test_missing_store_does_not_crash(tmp_path):
+    store = tmp_path / "does-not-exist" / "bunker_sessions.json"
+    broker = BunkerBroker(store_path=store)  # must not raise
+    created = broker.create_session()
+    assert store.exists()  # created on first save
+    assert broker.get_session(created["session_id"]) is not None
+
+
+def test_store_file_is_mode_0600(tmp_path):
+    import stat
+
+    store = tmp_path / "bunker_sessions.json"
+    broker = BunkerBroker(store_path=store)
+    broker.create_session()
+    mode = stat.S_IMODE(store.stat().st_mode)
+    assert mode == 0o600, f"expected 0600, got {oct(mode)}"
+
+
+def test_replay_guard_survives_restart(tmp_path):
+    store = tmp_path / "bunker_sessions.json"
+    b1 = BunkerBroker(store_path=store)
+    sid = b1.create_session()["session_id"]
+    secret = b1.get_session(sid).pairing_secret
+    cws, sws = FakeWS(), FakeWS()
+    run(b1.join(sid, ROLE_CLIENT, secret, cws))
+    run(b1.join(sid, ROLE_SIGNER, secret, sws))
+    # First relay of id "dup" records it in seen_ids (and persists it). The relay
+    # ran on an event loop, so the store write is queued; flush before "restart".
+    assert run(b1.relay(sid, ROLE_CLIENT, {"type": "sign_request", "id": "dup"})) is None
+    b1.flush()
+
+    # Restart: a fresh broker reloads the session AND its seen_ids, so the same
+    # request id cannot be replayed against the reloaded session.
+    b2 = BunkerBroker(store_path=store)
+    err = run(b2.relay(sid, ROLE_CLIENT, {"type": "sign_request", "id": "dup"}))
+    assert err == "duplicate_request"
+
+
+def test_no_store_path_is_pure_in_memory(tmp_path):
+    # Default behaviour (no store_path) persists nothing.
+    broker = BunkerBroker()
+    broker.create_session()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_secret_persisted_but_no_key_material(tmp_path):
+    # The store carries the opaque pairing secret + ids only; assert there is no
+    # PGP/private-key material serialized (defense-in-depth on the schema).
+    store = tmp_path / "bunker_sessions.json"
+    broker = BunkerBroker(store_path=store)
+    broker.create_session()
+    blob = store.read_text()
+    assert "PRIVATE KEY" not in blob
+    assert "BEGIN PGP" not in blob
