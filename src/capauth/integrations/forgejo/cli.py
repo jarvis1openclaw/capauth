@@ -35,7 +35,11 @@ from .forgejo_api import ForgejoAPIClient, ForgejoAPIError
 
 
 def _run(coro):  # type: ignore[no-untyped-def]
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # Reason: ``asyncio.get_event_loop()`` with no running loop is deprecated
+    # (DeprecationWarning since 3.12, hard error on the 3.14 track) and emits a
+    # "There is no current event loop" warning under ``-W error``. ``asyncio.run``
+    # is the supported entry point: it creates, drives, and closes a fresh loop.
+    return asyncio.run(coro)
 
 
 # ---------------------------------------------------------------------------
