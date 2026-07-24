@@ -1,15 +1,22 @@
 """Crypto backend abstraction for CapAuth.
 
 Provides a factory function to get the right backend based on
-user preference: PGPy (default, pure-Python) or GnuPG (optional,
-wraps system gpg2 for hardware key support).
+user preference: PGPy (default, pure-Python), GnuPG (wraps system
+gpg2 for hardware keys), Sequoia (`sq` CLI, PQC), or sk_pgp
+(in-process OpenPGP-PQC).
+
+Every backend is imported **lazily** inside :func:`get_backend`. This keeps
+``import capauth.crypto`` free of heavy/optional dependencies: notably PGPy,
+which imports the ``imghdr`` stdlib module that was removed in Python 3.13.
+Eagerly importing PGPy here would make the whole crypto package (and the sk_pgp
+migration path with it) unimportable on 3.13; lazy import confines that failure
+to the PGPy backend alone.
 """
 
 from __future__ import annotations
 
 from ..models import CryptoBackendType
 from .base import CryptoBackend, KeyBundle
-from .pgpy_backend import PGPyBackend
 
 __all__ = ["get_backend", "CryptoBackend", "KeyBundle"]
 
@@ -40,6 +47,20 @@ def get_backend(backend_type: CryptoBackendType = CryptoBackendType.PGPY) -> Cry
             )
         return backend
 
+    if backend_type == CryptoBackendType.SKPGP:
+        from .skpgp_backend import SKPgpBackend
+
+        backend = SKPgpBackend()
+        if not backend.available():
+            from ..exceptions import BackendError
+
+            raise BackendError(
+                "sk_pgp backend unavailable. Install the sk_pgp library "
+                "(OpenPGP-PQC) so it imports in this interpreter (see "
+                "memory: sk_pgp-library)."
+            )
+        return backend
+
     if backend_type == CryptoBackendType.GNUPG:
         from .gnupg_backend import GnuPGBackend
 
@@ -52,5 +73,19 @@ def get_backend(backend_type: CryptoBackendType = CryptoBackendType.PGPY) -> Cry
                 "and ensure gpg2 is on PATH."
             )
         return backend
+
+    # Default: PGPy (pure-Python). Imported lazily so 3.13 (no ``imghdr``)
+    # only fails here, on the PGPy path, rather than at package import time.
+    try:
+        from .pgpy_backend import PGPyBackend
+    except ImportError as exc:
+        from ..exceptions import BackendError
+
+        raise BackendError(
+            "PGPy backend unavailable in this interpreter "
+            f"({exc}). On Python 3.13+ PGPy fails because the stdlib "
+            "`imghdr` module was removed; use a PQC backend instead "
+            "(CryptoBackendType.SKPGP or SEQUOIA)."
+        ) from exc
 
     return PGPyBackend()

@@ -91,6 +91,7 @@ class CryptoBackendType(str, Enum):
     PGPY = "pgpy"
     GNUPG = "gnupg"
     SEQUOIA = "sequoia"  # PQC-capable (sq CLI); only backend that signs post-quantum
+    SKPGP = "sk_pgp"  # PQC-capable (in-process sk_pgp lib); signing root without shelling to sq
 
 
 class KeyInfo(BaseModel):
