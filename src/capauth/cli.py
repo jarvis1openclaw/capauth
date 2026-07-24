@@ -1370,3 +1370,60 @@ def pqc_report_cmd(output_format: str, static: bool) -> None:
         # plain echo: the report contains [status] brackets that rich would
         # mis-parse as markup tags.
         click.echo(format_project_report(rpt))
+
+
+@main.group(invoke_without_command=True)
+@click.pass_context
+def doctor(ctx: click.Context) -> None:
+    """Automated custody / health checks.
+
+    Bare 'capauth doctor' runs the key-custody checks (equivalent to
+    'capauth doctor custody').
+    """
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(doctor_custody)
+
+
+@doctor.command("custody")
+@click.option("--json", "json_out", is_flag=True, default=False,
+              help="Emit the report as JSON for automation.")
+@click.option("--max-backup-age-days", type=int, default=None,
+              help="Freshness window for the backup check (default 14).")
+@click.pass_context
+def doctor_custody(
+    ctx: click.Context, json_out: bool, max_backup_age_days: Optional[int]
+) -> None:
+    """Verify key-custody preconditions (exits nonzero on any FAIL).
+
+    Checks that identity material is present, the private key is not
+    group/world readable, the key is not revoked/expired, a root revocation
+    certificate exists, the keystore is intact, a recent backup exists and is
+    restorable, and the Nextcloud signing key is present. No secret material is
+    ever printed - only paths, public fingerprints, mtimes, sizes, and pass/fail.
+    """
+    import json as _json
+
+    from .custody import (
+        CustodyPaths,
+        DEFAULT_MAX_BACKUP_AGE_DAYS,
+        exit_code,
+        format_report,
+        report_to_dict,
+        run_custody_checks,
+    )
+
+    paths = CustodyPaths.resolve(ctx.obj.get("home"))
+    results = run_custody_checks(
+        paths=paths,
+        max_backup_age_days=(
+            max_backup_age_days
+            if max_backup_age_days is not None
+            else DEFAULT_MAX_BACKUP_AGE_DAYS
+        ),
+    )
+    if json_out:
+        click.echo(_json.dumps(report_to_dict(results), indent=2))
+    else:
+        # plain echo: statuses carry [BRACKETS] that rich would mis-parse.
+        click.echo(format_report(results))
+    raise SystemExit(exit_code(results))

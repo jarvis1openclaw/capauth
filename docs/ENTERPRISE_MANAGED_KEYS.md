@@ -344,7 +344,21 @@ of the same two interfaces.
 **P3 — polish / niche**
 7. Windows CNG + macOS Secure Enclave native signer adapters (or document
    PKCS#11 bridges).
-8. `key_custody` field in the profile + doctor check.
+8. `key_custody` field in the profile + doctor check. **[doctor check
+   IMPLEMENTED, coord 2b3af4b7]** `capauth doctor custody` (module
+   `src/capauth/custody.py`) runs automated read-only custody checks: identity
+   material present, private key not group/world readable (must be `0600`), key
+   not revoked/expired (reuses the shipped
+   `crypto/pgpy_backend._assert_key_usable` predicates), a root revocation
+   certificate exists at the documented path, the service keystore passes a
+   SQLite integrity check, a recent backup exists (the `capauth-backup`
+   automation, coord `0555cef0`) and is *restorable* (backed-up public key
+   restored to a temp dir and fingerprint-matched to the live key, never
+   touching live state), and the Nextcloud code-signing key is present with safe
+   perms (the exact `456cb3a` failure mode). Each check reports `OK`/`WARN`/`FAIL`
+   with a remediation hint; `--json` for automation; exits nonzero on any `FAIL`.
+   No secret material is ever printed: only paths, public fingerprints, mtimes,
+   sizes, and modes. The `key_custody` *profile field* remains TODO.
 9. (Optional, PGP-committed shops) WKD/WKS on a corp domain + YubiKey-OpenPGP
    fleet provisioning guide.
 
