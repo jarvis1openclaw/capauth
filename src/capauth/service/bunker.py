@@ -70,10 +70,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import queue
 import secrets
+import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional, Protocol
+from pathlib import Path
+from typing import Any, Optional, Protocol, Union
 
 logger = logging.getLogger("capauth.bunker")
 
@@ -124,23 +128,205 @@ class _Session:
     def is_paired(self) -> bool:
         return ROLE_CLIENT in self.peers and ROLE_SIGNER in self.peers
 
+    def to_record(self) -> dict[str, Any]:
+        """Serialize the durable part of the session (no live sockets, no keys).
+
+        Only the pairing identity + approval state is written: the ``session_id``,
+        the ``pairing_secret`` (an opaque join token, NOT key material), the TTL /
+        creation time, and the replay-guard ``seen_ids``. The live ``peers``
+        sockets are deliberately excluded (they cannot survive a process restart
+        and are re-established when peers reconnect).
+        """
+        return {
+            "session_id": self.session_id,
+            "pairing_secret": self.pairing_secret,
+            "ttl_seconds": self.ttl_seconds,
+            "created_at": self.created_at,
+            "seen_ids": sorted(self.seen_ids),
+        }
+
+    @classmethod
+    def from_record(cls, rec: dict[str, Any]) -> "_Session":
+        """Rebuild a session from a persisted record (peers start empty)."""
+        s = cls(
+            session_id=str(rec["session_id"]),
+            pairing_secret=str(rec["pairing_secret"]),
+            ttl_seconds=int(rec.get("ttl_seconds", SESSION_TTL_SECONDS)),
+            created_at=float(rec["created_at"]),
+        )
+        s.seen_ids = set(rec.get("seen_ids") or [])
+        return s
+
 
 class BunkerBroker:
-    """Stateless-ish in-memory broker that pairs and relays.
+    """In-memory broker that pairs and relays, with optional restart survival.
 
-    One instance is created per service process. Sessions live only in memory
-    and expire; nothing is persisted. Safe for the single-worker spike service.
+    One instance is created per service process. The live peer sockets always
+    live only in memory (they cannot outlast the process). When ``store_path``
+    is given, the *durable* part of each session (session id, pairing secret,
+    TTL/creation time, and the replay-guard ``seen_ids``) is persisted to a JSON
+    file so that an approved pairing survives a service restart: a client and
+    signer that reconnect with the same ``session_id`` + ``pairing_secret`` are
+    rejoined to the same session instead of getting ``unknown_session`` and
+    having to re-pair from scratch. No private-key material is ever persisted
+    (the broker never holds any).
+
+    On construction, non-expired persisted sessions are reloaded; expired ones
+    are dropped. A missing or corrupt store is tolerated (start empty), never
+    fatal. When ``store_path`` is ``None`` the broker is purely in-memory
+    (previous behaviour).
     """
 
     def __init__(
         self,
         ttl_seconds: int = SESSION_TTL_SECONDS,
         max_sessions: int = MAX_ACTIVE_SESSIONS,
+        store_path: Optional[Union[str, Path]] = None,
     ) -> None:
         self._sessions: dict[str, _Session] = {}
         self._ttl = ttl_seconds
         self._max_sessions = max_sessions
         self._lock = asyncio.Lock()
+        self._store_path: Optional[Path] = Path(store_path) if store_path else None
+        # Serializes the actual disk writes (the background writer thread is the
+        # only writer, but the io lock also guards inline synchronous writes).
+        self._io_lock = threading.Lock()
+        # Persistence from the async (event-loop) hot path must never touch the
+        # loop with blocking IO. Callers running on a loop hand a pre-serialized
+        # snapshot to this queue; a dedicated daemon thread does the disk write.
+        # This decouples persistence from the loop entirely (blocking IO or
+        # ``run_in_executor`` on the relay path both wedge Starlette's test
+        # WebSocket portal). Synchronous callers write inline for immediate
+        # durability. ``flush()`` drains the queue for tests / graceful shutdown.
+        self._write_q: "queue.Queue[Optional[str]]" = queue.Queue()
+        self._writer: Optional[threading.Thread] = None
+        if self._store_path is not None:
+            self._load_store()
+            self._start_writer()
+
+    # -- persistence ------------------------------------------------------
+
+    def _start_writer(self) -> None:
+        """Start the background store-writer daemon thread (idempotent)."""
+        if self._writer is not None:
+            return
+        t = threading.Thread(
+            target=self._writer_loop, name="bunker-store-writer", daemon=True
+        )
+        t.start()
+        self._writer = t
+
+    def _writer_loop(self) -> None:
+        """Drain queued snapshots and write them to disk, in order."""
+        while True:
+            data = self._write_q.get()
+            try:
+                if data is not None:
+                    self._write_store(data)
+            finally:
+                self._write_q.task_done()
+
+    def flush(self) -> None:
+        """Block until all queued persistence writes have hit disk.
+
+        For tests and graceful shutdown; a no-op when persistence is disabled.
+        """
+        if self._store_path is None:
+            return
+        self._write_q.join()
+
+    def _load_store(self) -> None:
+        """Reload persisted, non-expired sessions. Missing/corrupt = start empty.
+
+        Never raises: a broker must always come up, even if the store is absent
+        or malformed. Expired records are silently dropped on load.
+        """
+        path = self._store_path
+        if path is None or not path.exists():
+            return
+        try:
+            raw = json.loads(path.read_text())
+        except Exception as exc:
+            logger.warning(
+                "bunker: session store unreadable (%s); starting empty", exc
+            )
+            return
+        records = raw.get("sessions", []) if isinstance(raw, dict) else raw
+        now = time.time()
+        loaded = 0
+        for rec in records or []:
+            try:
+                session = _Session.from_record(rec)
+            except Exception:
+                logger.warning("bunker: skipping malformed session record")
+                continue
+            if session.is_expired(now):
+                continue
+            self._sessions[session.session_id] = session
+            loaded += 1
+        if loaded:
+            logger.info("bunker: reloaded %d persisted session(s)", loaded)
+        # Rewrite so any dropped-expired / malformed records are pruned on disk.
+        # Construction is synchronous (no running loop), so write inline.
+        self._write_store(self._serialize())
+
+    def _serialize(self) -> str:
+        """Snapshot the durable session state as a JSON string.
+
+        Called on the caller's thread so the ``self._sessions`` read is
+        consistent with the surrounding (locked) mutation, before any write is
+        potentially off-loaded to another thread.
+        """
+        records = [s.to_record() for s in self._sessions.values()]
+        return json.dumps({"version": 1, "sessions": records})
+
+    def _write_store(self, data: str) -> None:
+        """Atomically write ``data`` to the store file (mode 0600). Never raises.
+
+        Only serialized :meth:`_Session.to_record` output is written (session id
+        + pairing secret + TTL + replay ids), never live sockets, never key
+        material.
+        """
+        path = self._store_path
+        if path is None:
+            return
+        try:
+            with self._io_lock:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_name(path.name + ".tmp")
+                # Create the temp file 0600 before writing any secret material.
+                fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                try:
+                    os.write(fd, data.encode("utf-8"))
+                finally:
+                    os.close(fd)
+                os.replace(tmp, path)
+        except Exception as exc:  # pragma: no cover - disk error path
+            logger.warning("bunker: could not persist session store: %s", exc)
+
+    def _persist(self) -> None:
+        """Persist the current sessions durably.
+
+        The snapshot (:meth:`_serialize`) is always taken synchronously on the
+        caller's thread so it is consistent with the mutation that triggered it
+        (no ``await`` interleaves). When called on a running event loop (the POST
+        handler / the websocket relay), the disk write is handed to the
+        background writer thread so the loop never blocks; in a plain synchronous
+        context (construction, direct unit-test calls) it writes inline for
+        immediate durability. No-op when persistence is disabled.
+        """
+        if self._store_path is None:
+            return
+        data = self._serialize()
+        try:
+            asyncio.get_running_loop()
+            on_loop = True
+        except RuntimeError:
+            on_loop = False
+        if on_loop:
+            self._write_q.put(data)  # off the loop; writer thread persists it
+        else:
+            self._write_store(data)  # sync context: durable immediately
 
     # -- pairing ----------------------------------------------------------
 
@@ -162,6 +348,7 @@ class BunkerBroker:
         self._sessions[session_id] = _Session(
             session_id, pairing_secret, ttl_seconds=self._ttl
         )
+        self._persist()
         logger.info("bunker: session created %s", session_id)
         return {"session_id": session_id, "pairing_secret": pairing_secret}
 
@@ -169,6 +356,7 @@ class BunkerBroker:
         s = self._sessions.get(session_id)
         if s and s.is_expired():
             self._sessions.pop(session_id, None)
+            self._persist()
             return None
         return s
 
@@ -179,6 +367,7 @@ class BunkerBroker:
         for sid in dead:
             self._sessions.pop(sid, None)
         if dead:
+            self._persist()
             logger.debug("bunker: gc dropped %d expired sessions", len(dead))
 
     # -- connection lifecycle --------------------------------------------
@@ -218,8 +407,12 @@ class BunkerBroker:
                 return
             session.peers.pop(role, None)
             remaining = dict(session.peers)
+            removed = False
             if not session.peers:
                 self._sessions.pop(session_id, None)
+                removed = True
+        if removed:
+            self._persist()
         for other_role, sock in remaining.items():
             await self._safe_send(sock, {"type": "peer_left", "role": role})
         logger.info("bunker: %s left session %s", role, session_id)
@@ -242,14 +435,20 @@ class BunkerBroker:
                 return "unknown_session"
             # Replay guard: a request-bearing message (the client's sign_request,
             # or its sealed `enc` wrapper) may only be relayed once per session.
+            newly_seen = False
             if mtype in ("sign_request", "enc") and from_role == ROLE_CLIENT:
                 rid = message.get("id")
                 if rid:
                     if rid in session.seen_ids:
                         return "duplicate_request"
                     session.seen_ids.add(rid)
+                    newly_seen = True
             target_role = ROLE_SIGNER if from_role == ROLE_CLIENT else ROLE_CLIENT
             target = session.peers.get(target_role)
+        # Persist the grown replay-guard so a request approved just before a
+        # restart cannot be replayed against the reloaded session afterwards.
+        if newly_seen:
+            self._persist()
         if target is None:
             return "peer_absent"
         await self._safe_send(target, message)

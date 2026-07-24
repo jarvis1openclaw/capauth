@@ -36,6 +36,7 @@ from ..authentik.nonce_store import issue, peek
 from ..authentik.stage import build_challenge, verify_auth_response
 from ..authentik.verifier import fingerprint_from_armor
 from .. import integration as _integration
+from .. import resolve_capauth_home
 from .bunker import BunkerBroker, BunkerCapacityError, build_pairing_uri
 from .push import PushRegistry
 from .keystore import KeyStore
@@ -1257,7 +1258,16 @@ async def qr_verify_endpoint(nonce_id: str, req: VerifyRequest) -> dict[str, Any
 # never sees the private key. See bunker.py for the protocol + hardening notes.
 # ---------------------------------------------------------------------------
 
-_bunker = BunkerBroker(max_sessions=int(os.environ.get("CAPAUTH_BUNKER_MAX_SESSIONS", "500")))
+# Persist approved pairing sessions so they survive a service restart (clients
+# do NOT have to re-pair). Only session id + pairing secret + TTL + replay guard
+# are written (mode 0600), never key material. Set CAPAUTH_BUNKER_STORE="" to
+# opt back into pure in-memory (non-persistent) sessions.
+_bunker_store_default = str(resolve_capauth_home() / "service" / "bunker_sessions.json")
+_bunker_store = os.environ.get("CAPAUTH_BUNKER_STORE", _bunker_store_default) or None
+_bunker = BunkerBroker(
+    max_sessions=int(os.environ.get("CAPAUTH_BUNKER_MAX_SESSIONS", "500")),
+    store_path=_bunker_store,
+)
 _push = PushRegistry(data_dir=os.environ.get("CAPAUTH_DATA_DIR", "/data"))
 
 # Simple in-memory sliding-window rate limiter for POST /bunker/session, keyed by
