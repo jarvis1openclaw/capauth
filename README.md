@@ -217,6 +217,7 @@ rides in the payload `event` field so routing stays severity-based.
 | **[Protocol](docs/PROTOCOL.md)** | the CapAuth wire protocol specification |
 | **[Claims](docs/CLAIMS.md)** | capability claims and token format |
 | **[Integration Blueprint](docs/INTEGRATION_BLUEPRINT.md)** | third-party integration guide |
+| **[Cold-Machine Bootstrap & DR](docs/COLD_MACHINE_BOOTSTRAP_AND_DR.md)** | standing capauth back up on a blank box + disaster recovery: the restore-not-regenerate rule, the ordered restore chain, and the operator checklist |
 | **[authentik-capauth](docs/authentik-capauth.md)** | the custom Authentik image with the CapAuth PGP stage baked in — build (`AK_VERSION`, version-agnostic venv install, frontend rebuild), SKStacks deploy + `lifecycle.migrate` override, and the four build/migrate gotchas |
 | **[AI Advocate](AI-ADVOCATE.md)** | how AI advocates manage a sovereign profile on your behalf |
 
