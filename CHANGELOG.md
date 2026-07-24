@@ -14,6 +14,35 @@ All notable changes to `capauth` are documented here. The format is based on
   maturity tier + CRYPTOGRAPHY_STANDARD compliance line. Per the sk-standards
   `SK_REPO_DOC_STANDARD` (coord `237f38a1`).
 
+- **`docs/COLD_MACHINE_BOOTSTRAP_AND_DR.md`**: cold-machine bootstrap +
+  disaster-recovery runbook. Codifies the **restore-not-regenerate** identity
+  rule, the fixed chicken-and-egg restore order (offline root key into gpg, prime
+  gpg-agent, unseal skvault, restore `~/.capauth/` home, restore per-agent
+  profiles + `identity.json`, restore the service keystore, start + verify
+  `capauth-service`, re-pair bunker devices, restore the `.13` edge), the DR /
+  rotation paths (root compromise vs single-agent compromise vs key-loss), and a
+  top-to-bottom operator checklist with `REQUIRES CHEF` markers on every step that
+  touches secret key material. No secret is written into the doc. Coord `d7dca00c`.
+
+- **`scripts/provision_agent_profiles.py` `--allow-new-keys` guard**: the
+  provisioner now **refuses to mint a fresh keypair** for a missing agent profile
+  unless `--allow-new-keys` is passed explicitly, preventing an accidental
+  identity fork on a restore (minting over an agent that already had a key breaks
+  every consumer enrolled against its real fingerprint). A no-flag run only reads
+  existing fingerprints and rewrites the non-key `identity.json` dual-URI fields
+  (`capauth_uri`, `fqid`), and prints a loud identity-forking warning when a
+  profile is missing. Coord `d7dca00c`.
+
+- **Vendored `tools/build-sq.sh`**: the Sequoia PQC (`sq`) build script now lives
+  in-repo (pinned `sq 1.4.0-pqc.1` / `sequoia-openpgp 2.2.0-pqc.1`), autodetecting
+  the OpenSSL prefix (with an OpenSSL >= 3.5 gate), autodetecting `libclang`
+  (llvm18/20/21) to dodge the `bindgen` layout bug, and patching the binary rpath.
+  The PQC signing backend now builds without an external script. Commit `f1846a4`.
+
+- **DID `capabilityInvocation` / `capabilityDelegation`**: both verification
+  relationships are now declared in all three DID tiers (`did:key`, mesh
+  `did:web`, public `did:web`). Commit `bc7ada2`.
+
 - **T3 composite root-identity path — additive + GATED** (`pqc_root_identity.py`).
   A clearly feature-flagged path that signs/verifies a composite **ML-DSA-87 + Ed448**
   (FIPS 204 + RFC 8032) identity attestation via the Sequoia backend. The signing
@@ -28,6 +57,25 @@ All notable changes to `capauth` are documented here. The format is based on
   `tests/test_pqc_t3_gate.py` (gate-default-closed + classical-untouched without
   `sq`; composite sign→verify roundtrip + tamper/wrong-key reject with `sq`).
   Docs: `docs/PQC_ROOT_MIGRATION.md` §5a. Epic `PQC-MIGRATION` (coord `7b1bcaee`).
+
+### Security
+
+- **Revoked / expired signing-key rejection**: the `pgpy` and `gnupg` verify
+  paths now reject a signing key that carries a revocation signature or is expired
+  **before** the signature check (`KeyRevokedError` / `KeyExpiredError`), closing
+  the gap where the default PGPy path silently accepted a revoked or expired
+  signer. Also fixes a `gnupg` `sign()` `ImportResult.ok` crash. 14 new tests.
+  Commit `f1846a4`. (Scope note: this rejects keys whose own material shows
+  revocation/expiry; full external revocation-certificate enforcement in the
+  default verify path is still an open item, tracked in the DR runbook as G1.)
+
+- **`verify_challenge` TTL + replay guard**: challenge verification enforces a
+  default max challenge age of 5 minutes (`DEFAULT_MAX_CHALLENGE_AGE_SECONDS = 300`,
+  with clock-skew tolerance; older challenges raise `ChallengeExpiredError`) and
+  accepts an optional single-use `replay_guard`. The bare primitive stays
+  replayable within the TTL unless a guard is supplied; `InMemoryReplayGuard` is
+  the single-process reference (`ChallengeReplayError` on reuse), and the
+  verification service uses a durable nonce store. 25 new tests. Commit `f1846a4`.
 
 ### Crypto / PQC (recent, pre-changelog history)
 

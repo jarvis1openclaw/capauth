@@ -188,6 +188,35 @@ deploy with Chef's real key — see [docs/ROOT_ROTATION_CEREMONY.md](docs/ROOT_R
 and [docs/PQC_ROOT_MIGRATION.md](docs/PQC_ROOT_MIGRATION.md). It is additive and
 reversible; classical keys are not removed while interop is in flux.
 
+### Disaster recovery / cold-machine bootstrap
+
+Standing capauth back up on a blank box, or recovering from key loss / compromise,
+follows a **fixed, non-negotiable restore order** (skvault is sealed to the root, so
+the root key must come from offline custody first, then gpg-agent, then the vault,
+then the identity homes). The full ordered procedure, the DR paths (root vs
+single-agent vs key-loss), and a top-to-bottom operator checklist are the runbook:
+**[docs/COLD_MACHINE_BOOTSTRAP_AND_DR.md](docs/COLD_MACHINE_BOOTSTRAP_AND_DR.md)**
+(coord `d7dca00c`). Every step that touches secret key material is marked
+`REQUIRES CHEF`; no secret is written into the runbook.
+
+> **The one rule: RESTORE, do not regenerate.** Every private key, profile, and
+> fingerprint a consumer is already enrolled against must come back byte-identical
+> from the sovereign backup. Minting a fresh keypair for an agent that already had
+> one forks its identity and silently breaks every enrolled consumer.
+
+**Provision guard (`scripts/provision_agent_profiles.py`).** This is the one command
+in the tree that can mint a fresh agent keypair, so it is **guarded closed**: it
+refuses to generate a key for a missing profile unless `--allow-new-keys` is passed
+explicitly (and prints a loud identity-forking warning). A no-flag run is safe on a
+restore: it only reads existing fingerprints and rewrites the derived `identity.json`
+dual-URI fields (`capauth_uri`, `fqid`), never minting.
+
+```bash
+python scripts/provision_agent_profiles.py --dry-run   # preview, writes nothing
+python scripts/provision_agent_profiles.py             # restore-safe: identity.json only
+python scripts/provision_agent_profiles.py --allow-new-keys   # ONLY for a genuinely new agent
+```
+
 ### Front-end / Exposure
 
 Per [sk-standards `UNIFIED_INGRESS_STANDARD.md`](https://github.com/smilinTux/sk-standards/blob/main/standards/UNIFIED_INGRESS_STANDARD.md):
