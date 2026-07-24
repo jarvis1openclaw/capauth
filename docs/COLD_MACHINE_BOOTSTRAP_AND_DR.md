@@ -314,6 +314,26 @@ in-memory bunker broker and rate limiter - a restart drops all bunker pairings
 and in-flight logins. Restoring `keys.db` recovers enrolled keys but **not**
 live bunker pairings (see Step 8).
 
+**Where these backups come from (scheduled automation).**
+`scripts/capauth-backup.sh` produces the very artifacts this step restores: an
+online (consistent) snapshot of `keys.db` plus, when configured, a `pg_dump` of
+the .13 Authentik Postgres (Step 9). It writes timestamped dirs under
+`~/.capauth/backups` with N-day rotation, an optional off-box rsync target, and a
+`MANIFEST.txt` (sizes + sha256, no secrets). It **never** copies the root private
+key - that stays in offline custody (Step 1). Enable it (not part of any deploy
+step) with the two units in `deploy/capauth-service/systemd/`:
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp deploy/capauth-service/systemd/capauth-backup.{service,timer} ~/.config/systemd/user/
+# edit ExecStart path + optional EnvironmentFile (~/.capauth/backup.env) for
+# CAPAUTH_AUTHENTIK_PG_* / PGPASSWORD / CAPAUTH_BACKUP_REMOTE
+systemctl --user daemon-reload
+systemctl --user enable --now capauth-backup.timer   # daily 03:30, persistent
+systemctl --user start capauth-backup.service        # one-off manual run
+capauth-backup.sh --dry-run                          # preview, touches nothing
+```
+
 ### Step 7 - Start and verify capauth-service
 
 Bring the verification service up. The deploy tooling is in-repo:
@@ -502,4 +522,11 @@ POST-RESTORE VERIFICATION (Part C.4 - all must pass)
 - **Service HA (G3)** - the single-container keystore + in-memory broker means a
   restart loses bunker pairings and in-flight logins. Until the Postgres-backed
   keystore lands, Steps 6 and 8 are expected to require re-enrollment / re-pair.
+- **Live backup rehearsal is CHEF-only.** The scheduled backup automation now
+  exists (`scripts/capauth-backup.sh` + `deploy/capauth-service/systemd/`,
+  covered in Step 6) and has been validated end to end against a throwaway
+  scratch DB. The end-to-end **restore drill against real key material** (coord
+  `0555cef0` acceptance criterion 2: wipe a scratch volume, restore, start
+  service, confirm a previously enrolled key still authenticates) touches live
+  identity state and is a Chef-only action, not run by automation.
 ```

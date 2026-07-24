@@ -1,0 +1,19 @@
+# CapAuth identity-state backup timer - daily, off-box + rotation handled by the script.
+#
+# NOT installed live by any deploy step. See capauth-backup.service for install.
+# Pairs with capauth-backup.service; rotation (N-day) is done inside the script.
+
+[Unit]
+Description=Daily CapAuth identity-state backup
+Documentation=file://%h/clawd/skcapstone-repos/capauth/docs/COLD_MACHINE_BOOTSTRAP_AND_DR.md
+
+[Timer]
+# Every day at 03:30 local, with jitter so a fleet doesn't stampede a shared PG.
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=900
+# Run a missed backup after downtime rather than silently skipping a day.
+Persistent=true
+Unit=capauth-backup.service
+
+[Install]
+WantedBy=timers.target

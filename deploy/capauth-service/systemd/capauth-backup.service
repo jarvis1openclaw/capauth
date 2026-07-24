@@ -1,0 +1,52 @@
+# CapAuth identity-state backup - oneshot service (driven by capauth-backup.timer).
+#
+# NOT installed live by any deploy step. Enable per docs/COLD_MACHINE_BOOTSTRAP_AND_DR.md
+# ("Scheduled backups"). Runs as a user unit by default so it inherits the
+# operator's ~/.capauth and gpg-agent context; a system unit works too if you set
+# User= and absolute paths.
+#
+# Configure via an EnvironmentFile so the Postgres password / remote target stay
+# OUT of this repo (see the commented EnvironmentFile line below).
+#
+# Install (user scope, NOT run here):
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/capauth-service/systemd/capauth-backup.{service,timer} ~/.config/systemd/user/
+#   # edit ExecStart path + EnvironmentFile below to match this checkout
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now capauth-backup.timer
+#   systemctl --user start capauth-backup.service   # one-off manual run
+
+[Unit]
+Description=CapAuth identity-state backup (keystore + Authentik DB)
+Documentation=file://%h/clawd/skcapstone-repos/capauth/docs/COLD_MACHINE_BOOTSTRAP_AND_DR.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+
+# Point this at your capauth checkout.
+ExecStart=%h/clawd/skcapstone-repos/capauth/scripts/capauth-backup.sh
+
+# Keep secrets (PGPASSWORD, CAPAUTH_BACKUP_REMOTE, pg host/db/user) out of the
+# repo - put them in a 0600 env file and uncomment:
+# EnvironmentFile=%h/.capauth/backup.env
+
+# Sensible defaults (override in the EnvironmentFile above):
+Environment=CAPAUTH_BACKUP_RETAIN_DAYS=14
+
+# Hardening - least privilege for a backup job.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+# Backups are written under ~/.capauth/backups; allow just that tree to be writable.
+ReadWritePaths=%h/.capauth
+
+# Don't let a stuck pg_dump / rsync hang forever.
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=default.target
