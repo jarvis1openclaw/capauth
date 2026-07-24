@@ -7,15 +7,33 @@ For each active agent:
 1. If a real CapAuth profile (``capauth/identity/profile.json``) already
    exists: reads fingerprint from it.
 2. If not: generates a fresh Ed25519 keypair via ``capauth.profile.init_profile``
-   and writes it to ``~/.skcapstone/agents/<agent>/capauth/``.
+   and writes it to ``~/.skcapstone/agents/<agent>/capauth/`` -- **but only when
+   ``--allow-new-keys`` is passed** (see the identity-forking guard below).
 3. Writes / updates ``identity.json`` with the canonical dual-URI fields:
    ``capauth_uri``, ``fqid``, ``fingerprint``.
 
 Usage::
 
     python scripts/provision_agent_profiles.py [--dry-run] [--agent AGENT ...]
+    python scripts/provision_agent_profiles.py --allow-new-keys   # first-time mint
 
 Dry-run prints what *would* change without writing anything.
+
+Identity-forking guard (coord d7dca00c)
+---------------------------------------
+Generating a keypair for an agent that *already has* a sovereign identity forks
+that identity: every consumer enrolled against the old fingerprint breaks with a
+new one, silently. This is exactly the wrong thing to do on a cold / wiped
+machine, where the correct action is to **restore** the existing profiles from
+the sovereign backup, not mint new ones. See
+``docs/COLD_MACHINE_BOOTSTRAP_AND_DR.md``.
+
+So key generation is **refused by default**. When a profile is missing the
+script warns loudly and leaves the identity untouched (it still writes the
+non-key ``identity.json`` fields, which is harmless). Pass ``--allow-new-keys``
+only when you deliberately intend to mint a *brand new* identity (genuine
+first-time provisioning of a never-before-enrolled agent), never as part of a
+restore.
 """
 
 from __future__ import annotations
@@ -172,19 +190,36 @@ def main() -> None:
         default=DEFAULT_AGENTS,
         help="Agents to provision (default: all known agents).",
     )
+    parser.add_argument(
+        "--allow-new-keys",
+        action="store_true",
+        help=(
+            "Permit minting a FRESH keypair when an agent has no profile. OFF by "
+            "default: generating a key for an agent that already had one forks its "
+            "identity and breaks every enrolled consumer. On a restore/cold machine, "
+            "restore profiles from backup instead (see COLD_MACHINE_BOOTSTRAP_AND_DR.md)."
+        ),
+    )
     args = parser.parse_args()
 
     cluster = _load_cluster()
     agents = args.agent
     dry_run = args.dry_run
+    allow_new_keys = args.allow_new_keys
 
     if dry_run:
-        print("DRY RUN — no files will be written.\n")
+        print("DRY RUN - no files will be written.\n")
+    if allow_new_keys:
+        print(
+            "[!] --allow-new-keys is SET: missing profiles WILL be minted as fresh\n"
+            "    keypairs. Do NOT use this on a restore/cold machine - it forks agent\n"
+            "    identities. Confirm this is genuine first-time provisioning.\n"
+        )
 
     for agent in agents:
         agent_dir = AGENTS_DIR / agent
         if not agent_dir.exists():
-            print(f"[SKIP] {agent} — agent directory not found")
+            print(f"[SKIP] {agent} - agent directory not found")
             continue
 
         capauth_dir = agent_dir / "capauth"
@@ -199,10 +234,26 @@ def main() -> None:
         # Step 1: Try to load existing fingerprint
         fingerprint = _load_existing_fingerprint(capauth_dir)
 
-        # Step 2: Generate new profile if missing
+        # Step 2: Generate new profile if missing -- GUARDED (coord d7dca00c).
+        # Refuse to mint a fresh keypair unless --allow-new-keys is explicit,
+        # because minting over an agent that already had an identity forks it and
+        # breaks every enrolled consumer. On a cold/wiped machine the right move
+        # is to RESTORE the profile from the sovereign backup, not regenerate.
         if fingerprint is None:
-            print(f"  No profile found at {capauth_dir} — generating...")
-            if not dry_run:
+            if not allow_new_keys:
+                print(
+                    f"  [REFUSED] No profile found at {capauth_dir}.\n"
+                    f"            NOT generating a key: doing so would FORK {agent}'s\n"
+                    f"            identity and break every consumer enrolled against its\n"
+                    f"            real fingerprint. If this is a restore, recover the\n"
+                    f"            profile from the sovereign backup instead (see\n"
+                    f"            docs/COLD_MACHINE_BOOTSTRAP_AND_DR.md). If this really is\n"
+                    f"            a brand-new agent, re-run with --allow-new-keys.",
+                    file=sys.stderr,
+                )
+                # identity.json still gets its non-key fields; fingerprint stays None.
+            elif not dry_run:
+                print(f"  No profile found at {capauth_dir} - generating (--allow-new-keys)...")
                 fingerprint = _generate_profile(agent, capauth_dir)
                 if fingerprint:
                     print(f"  Generated fingerprint: {fingerprint}")
@@ -211,7 +262,7 @@ def main() -> None:
                         f"  [WARN] Could not generate profile; identity.json will lack fingerprint"
                     )
             else:
-                print(f"  [dry-run] Would generate new Ed25519 keypair")
+                print(f"  [dry-run] Would generate new Ed25519 keypair (--allow-new-keys)")
                 fingerprint = None
         else:
             print(f"  fingerprint : {fingerprint}")
