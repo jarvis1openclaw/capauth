@@ -1,12 +1,19 @@
-# CapAuth + Forgejo — Passwordless PGP Login for Sovereign Git
+# CapAuth + Forgejo: Passwordless PGP Login for Sovereign Git
 #
 # Quick start:
-#   1. Generate Forgejo config:  capauth setup forgejo --capauth-url http://capauth:8420
-#   2. Copy the output to forgejo/conf/app.ini
-#   3. docker compose up -d
-#   4. Visit http://localhost:3000 and click "Sign in with CapAuth"
+#   1. cp .env.example .env  and set STRONG unique secrets (see .env.example)
+#   2. ./preflight.sh                  # refuses to run on default/empty secrets
+#   3. Generate Forgejo config:  capauth setup forgejo --capauth-url http://capauth:8420
+#   4. Copy the output to forgejo/conf/app.ini
+#   5. docker compose up -d
+#   6. Visit http://localhost:3000 and click "Sign in with CapAuth"
 #
 # For production, set proper secrets and use Traefik/nginx for TLS.
+#
+# SECURITY: CAPAUTH_ADMIN_TOKEN and CAPAUTH_JWT_SECRET are REQUIRED and have NO
+# committed default. Compose hard-fails (via the ${VAR:?...} form below) if they
+# are unset or empty; ./preflight.sh additionally rejects the placeholder
+# defaults from .env.example. Never commit real secret values.
 
 services:
   # ── CapAuth Verification Service ──────────────────────────────────
@@ -20,10 +27,10 @@ services:
     environment:
       CAPAUTH_SERVICE_ID: capauth.local
       CAPAUTH_BASE_URL: http://localhost:8420
-      CAPAUTH_ADMIN_TOKEN: ${CAPAUTH_ADMIN_TOKEN:-change-me-admin-token}
+      CAPAUTH_ADMIN_TOKEN: ${CAPAUTH_ADMIN_TOKEN:?set CAPAUTH_ADMIN_TOKEN in .env (see .env.example); run ./preflight.sh first}
       CAPAUTH_REQUIRE_APPROVAL: "false"
       CAPAUTH_DB_PATH: /data/keys.db
-      CAPAUTH_JWT_SECRET: ${CAPAUTH_JWT_SECRET:-change-me-jwt-secret-at-least-32-chars}
+      CAPAUTH_JWT_SECRET: ${CAPAUTH_JWT_SECRET:?set CAPAUTH_JWT_SECRET in .env (see .env.example); run ./preflight.sh first}
     volumes:
       - capauth_data:/data
     healthcheck:
