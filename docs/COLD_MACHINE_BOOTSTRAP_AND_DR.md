@@ -334,6 +334,24 @@ systemctl --user start capauth-backup.service        # one-off manual run
 capauth-backup.sh --dry-run                          # preview, touches nothing
 ```
 
+**Automated restore (the inverse).** `scripts/capauth-restore.sh` consumes one
+of those artifact dirs and writes the state back onto the live paths, confirm-gated
+and fail-closed: it verifies every file against the artifact `MANIFEST.txt` sha256
+**before** touching anything, copies each existing target aside to
+`<target>.pre-restore-<ts>`, and refuses to overwrite without an explicit
+confirmation (type `RESTORE`, or pass `--yes` for a non-interactive/tested run).
+It restores the keystore (`keys.db`) and the bunker pairing store
+(`bunker_sessions.json`); the Authentik Postgres leg is separately gated behind
+`--include-pg` (it REPLACES objects in the target DB). It never restores private
+key material - that is not in the artifact and stays in offline custody (Step 1).
+
+```sh
+scripts/capauth-restore.sh --latest --dry-run        # verify + show plan, touch nothing
+scripts/capauth-restore.sh /path/to/capauth-backup-<ts>   # interactive (type RESTORE)
+scripts/capauth-restore.sh --latest --yes            # non-interactive keystore + bunker
+scripts/capauth-restore.sh --latest --include-pg --yes    # also restore the Authentik DB
+```
+
 ### Step 7 - Start and verify capauth-service
 
 Bring the verification service up. The deploy tooling is in-repo:
@@ -370,11 +388,15 @@ capauth profile verify                          # self-signature integrity
 
 ### Step 8 - Re-pair bunker devices
 
-The bunker broker (`src/capauth/service/bunker.py`) is an **in-memory** WebSocket
-relay: all phone-to-desktop pairings are lost on any service restart, so on a
-cold machine there are none. The **phone signer holds the actual key** (encrypted
-in the phone's keyvault); the desktop/service never sees it, so nothing secret is
-lost - the pairing just has to be re-established.
+The bunker broker (`src/capauth/service/bunker.py`) relays over WebSocket. Live
+peer sockets are always in-memory (they cannot survive a restart), but approved
+pairings are now **persisted** to `bunker_sessions.json` (session id + opaque join
+token + TTL + replay ids; NEVER key material). If Step 6's restore ran, that store
+is already back in place, so a client that reconnects with the same
+`session_id` + `pairing_secret` rejoins instead of getting `unknown_session` - no
+re-pair needed. If there is no restored store (or it expired), re-pair from
+scratch. Either way the **phone signer holds the actual key** (encrypted in the
+phone's keyvault); the desktop/service never sees it, so nothing secret is lost.
 
 ```sh
 # per docs/CAPAUTH_BUNKER_REMOTE_SIGNER.md:
