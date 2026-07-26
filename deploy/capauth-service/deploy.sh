@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# CapAuth Verification Service — local deploy + smoke test
+# CapAuth Verification Service - local deploy + smoke test
 #
 # Usage:
 #   ./deploy.sh              # Start the service (builds if needed)
 #   ./deploy.sh --test       # Start + run smoke tests
 #   ./deploy.sh --stop       # Stop the service
 #   ./deploy.sh --status     # Check service status
+#   ./deploy.sh --provision  # Only generate/reuse the .env secrets, don't start
 #
 # Requires: docker, docker compose, curl
+#
+# Secrets: the generated .env is gitignored and is the only on-disk copy of
+# CAPAUTH_ADMIN_TOKEN / CAPAUTH_JWT_SECRET. Back it up in skvault. Re-running
+# reuses the existing .env (secrets are never rotated). To seed from a vault,
+# export CAPAUTH_ADMIN_TOKEN / CAPAUTH_JWT_SECRET before the first run.
 
 set -euo pipefail
 
@@ -20,18 +26,83 @@ green() { echo -e "\033[32m$*\033[0m"; }
 red()   { echo -e "\033[31m$*\033[0m"; }
 blue()  { echo -e "\033[36m$*\033[0m"; }
 
-# ── Generate .env if missing ──────────────────────────────────────────────────
-if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
-    blue "→ No .env found, generating from .env.example..."
+# ── Provision service secrets into .env (idempotent, vault-friendly) ──────────
+# The generated .env is gitignored (see repo .gitignore) so its secrets are
+# NEVER committed. It is also the ONLY on-disk copy, so first-run provisioning
+# prints a reminder to back it up durably (skvault). Re-running REUSES the
+# existing .env verbatim, so restarts/redeploys never silently rotate the live
+# CAPAUTH_ADMIN_TOKEN / CAPAUTH_JWT_SECRET.
+#
+# Vault-backed path: export CAPAUTH_ADMIN_TOKEN / CAPAUTH_JWT_SECRET (e.g. from
+# skvault) before the first run and they are adopted verbatim instead of a
+# freshly minted random value.
+provision_secrets() {
+    if [[ -f "$SCRIPT_DIR/.env" ]]; then
+        blue "→ Reusing existing $SCRIPT_DIR/.env (secrets preserved, not rotated)"
+        return 0
+    fi
+
+    blue "→ No .env found, provisioning from .env.example..."
     cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
-    # Generate random secrets
-    ADMIN_TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(24))")
-    JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-    sed -i.bak "s/change-me-admin-token-min-32-chars/$ADMIN_TOKEN/" "$SCRIPT_DIR/.env"
-    sed -i.bak "s/change-me-jwt-secret-at-least-32-chars/$JWT_SECRET/" "$SCRIPT_DIR/.env"
-    rm -f "$SCRIPT_DIR/.env.bak"
-    green "✓ Generated .env with random secrets"
-fi
+
+    # A value is "default" if unset/empty or still a committed change-me* placeholder.
+    _is_default_secret() {
+        case "${1:-}" in
+            "" | change-me* | changeme* | CHANGE-ME* | CHANGEME* | change_me* | CHANGE_ME*) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    local admin_token="${CAPAUTH_ADMIN_TOKEN:-}"
+    local jwt_secret="${CAPAUTH_JWT_SECRET:-}"
+    local adopted_admin=0 adopted_jwt=0
+    if _is_default_secret "$admin_token"; then
+        admin_token=$(python3 -c "import secrets; print(secrets.token_hex(24))")
+    else
+        adopted_admin=1
+    fi
+    if _is_default_secret "$jwt_secret"; then
+        jwt_secret=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+    else
+        adopted_jwt=1
+    fi
+
+    # Rewrite the two keys robustly (no sed delimiter injection: adopted vault
+    # secrets may contain / & | etc.). Values are passed via env, never argv.
+    ADMIN_TOKEN="$admin_token" JWT_SECRET="$jwt_secret" python3 - "$SCRIPT_DIR/.env" <<'PY'
+import os, sys
+path = sys.argv[1]
+repl = {
+    "CAPAUTH_ADMIN_TOKEN": os.environ["ADMIN_TOKEN"],
+    "CAPAUTH_JWT_SECRET": os.environ["JWT_SECRET"],
+}
+out = []
+with open(path) as f:
+    for line in f:
+        key = line.split("=", 1)[0].strip()
+        if key in repl:
+            out.append(f"{key}={repl[key]}\n")
+        else:
+            out.append(line)
+with open(path, "w") as f:
+    f.writelines(out)
+PY
+
+    chmod 600 "$SCRIPT_DIR/.env"
+    (( adopted_admin )) && blue "  · CAPAUTH_ADMIN_TOKEN adopted from environment (vault)" || blue "  · CAPAUTH_ADMIN_TOKEN generated (random)"
+    (( adopted_jwt ))   && blue "  · CAPAUTH_JWT_SECRET adopted from environment (vault)"   || blue "  · CAPAUTH_JWT_SECRET generated (random)"
+    green "✓ Provisioned $SCRIPT_DIR/.env (chmod 600, gitignored)"
+
+    red "──────────────────────────────────────────────────────────────"
+    red "  BACK UP THESE SECRETS: .env is the ONLY copy and is NOT in git."
+    red "  A lost checkout silently rotates every deployed token."
+    red "  Store it durably in skvault, e.g.:"
+    red "    skvault put capauth-service-env < \"$SCRIPT_DIR/.env\""
+    red "  Re-running deploy.sh REUSES this .env (no rotation)."
+    red "──────────────────────────────────────────────────────────────"
+}
+
+provision_secrets
 
 # ── Handle modes ──────────────────────────────────────────────────────────────
 case "$MODE" in
@@ -45,6 +116,10 @@ case "$MODE" in
         curl -sf "$CAPAUTH_URL/capauth/v1/status" | python3 -m json.tool
         exit 0
         ;;
+    --provision)
+        # Secrets were provisioned above; do not start docker.
+        exit 0
+        ;;
     --test)
         DO_TEST=1
         ;;
@@ -53,7 +128,7 @@ case "$MODE" in
         ;;
     *)
         echo "Unknown option: $MODE"
-        echo "Usage: $0 [--test|--stop|--status]"
+        echo "Usage: $0 [--test|--stop|--status|--provision]"
         exit 1
         ;;
 esac
