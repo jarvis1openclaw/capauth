@@ -14,10 +14,10 @@ The issuer signs with their CapAuth PGP key. Any holder can verify
 with the issuer's public key. No server required.
 
 This module was moved verbatim from skcapstone into capauth (kernel track M1):
-capauth is the L0 identity/authz core, and tokens belong with it. skcapstone
-re-exports these names from skcapstone.tokens for byte-compatible imports. The
-portable-export envelope key stays "skcapstone_token" so tokens already issued in
-the wild still import.
+capauth is the L0 identity/authz core, and tokens belong with it. The old
+skcapstone.tokens re-export shim was retired (CR-3.6); callers import from
+capauth.tokens directly. The portable-export envelope key stays "skcapstone_token"
+so tokens already issued in the wild still import.
 """
 
 from __future__ import annotations
