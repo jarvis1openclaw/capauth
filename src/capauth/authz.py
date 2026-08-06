@@ -209,8 +209,49 @@ _SKCHAT_RULES: tuple[CapabilityRule, ...] = (
     ),
 )
 
+# The skgateway capability rules (SKWorld Authorization Model L1.8). skgateway is
+# the ONE non-Python PEP: it authenticates locally, then calls this PDP over
+# ``POST /v1/authz/decide`` (it does not port ``decide``). Two capabilities, at
+# the tiers the design doc assigns:
+#
+#   * ``skgateway.infer``  -> ATTESTED. Running an inference proxies compute AS
+#     the subject (spends the subject's budget, reaches paid cloud backends). It
+#     is a write-class "spend compute as yourself" action, the same tier as
+#     ``skchat.voice`` (run STT/TTS compute on the subject's behalf): storing/
+#     spending on the subject's behalf, but not itself mutating shared state or
+#     other subjects' records the way a verified action does.
+#   * ``skgateway.admin`` -> VERIFIED. The /admin surface mutates the model
+#     catalog / advertise allowlist / routing, i.e. it changes what the WHOLE
+#     fleet is offered and how traffic is steered. That is an act/admin-class
+#     change affecting other subjects, so it takes the verified floor (matching
+#     ``skchat.groups`` / ``skchat.calls``).
+_SKGATEWAY_RULES: tuple[CapabilityRule, ...] = (
+    CapabilityRule(
+        capability="skgateway.infer",
+        required_capability="skgateway.infer",
+        minimum_mode=EnrollmentMode.ATTESTED,
+        description=(
+            "Proxy an inference request AS the subject (spends the subject's "
+            "budget, may reach paid cloud backends); write-class compute-spend."
+        ),
+    ),
+    CapabilityRule(
+        capability="skgateway.admin",
+        required_capability="skgateway.admin",
+        minimum_mode=EnrollmentMode.VERIFIED,
+        description=(
+            "Mutate the gateway model catalog / advertise allowlist / routing; "
+            "verified because it changes what the whole fleet is offered."
+        ),
+    ),
+)
+
 #: The default, process-wide capability rule table, keyed by capability name.
-DEFAULT_RULES: dict[str, CapabilityRule] = {rule.capability: rule for rule in _SKCHAT_RULES}
+#: The seeded skchat rows plus the skgateway rows (L1.8). Additive: every prior
+#: row is untouched; new subapps append their own ``<subapp>.*`` namespace here.
+DEFAULT_RULES: dict[str, CapabilityRule] = {
+    rule.capability: rule for rule in (*_SKCHAT_RULES, *_SKGATEWAY_RULES)
+}
 
 
 # --------------------------------------------------------------------------- #

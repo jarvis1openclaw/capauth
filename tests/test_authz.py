@@ -274,11 +274,12 @@ def test_default_rules_seed_the_three_skchat_capabilities():
     assert DEFAULT_RULES["skchat.inbox"].minimum_mode is EnrollmentMode.TOFU
 
 
-def test_default_rules_include_the_five_new_skchat_capabilities():
-    """SKWorld Authorization Model L2.2: 8 capabilities total (3 shipped + 5 new),
+def test_default_rules_include_the_eight_skchat_capabilities():
+    """SKWorld Authorization Model L2.2: 8 skchat capabilities (3 shipped + 5 new),
     each at the tier->mode the taxonomy assigns (read=tofu, write=attested,
-    act=verified)."""
-    assert set(DEFAULT_RULES) == {
+    act=verified). These eight are a SUBSET now that other subapps (skgateway)
+    also seed rows into DEFAULT_RULES."""
+    assert {
         "skchat.send",
         "skchat.inbox",
         "skchat.prekey",
@@ -287,7 +288,7 @@ def test_default_rules_include_the_five_new_skchat_capabilities():
         "skchat.voice",
         "skchat.groups",
         "skchat.calls",
-    }
+    } <= set(DEFAULT_RULES)
     # read tier -> tofu
     assert DEFAULT_RULES["skchat.status"].minimum_mode is EnrollmentMode.TOFU
     # write tier -> attested
@@ -299,3 +300,51 @@ def test_default_rules_include_the_five_new_skchat_capabilities():
     # every rule's required_capability equals its own name (self-granting rows)
     for name, rule in DEFAULT_RULES.items():
         assert rule.required_capability == name
+
+
+def test_default_rules_include_the_skgateway_capabilities():
+    """SKWorld Authorization Model L1.8: skgateway is the one non-Python PEP; it
+    seeds two rows into the shared PDP rule table. infer=attested (spend compute
+    as yourself), admin=verified (mutate the fleet's model catalog / routing)."""
+    assert {"skgateway.infer", "skgateway.admin"} <= set(DEFAULT_RULES)
+    # write/compute-spend tier -> attested
+    assert DEFAULT_RULES["skgateway.infer"].minimum_mode is EnrollmentMode.ATTESTED
+    # act/admin tier -> verified
+    assert DEFAULT_RULES["skgateway.admin"].minimum_mode is EnrollmentMode.VERIFIED
+    # self-granting rows, like every other rule
+    assert DEFAULT_RULES["skgateway.infer"].required_capability == "skgateway.infer"
+    assert DEFAULT_RULES["skgateway.admin"].required_capability == "skgateway.admin"
+
+
+def test_skgateway_infer_decision_end_to_end(tmp_path):
+    """The skgateway.infer rule decides through the same PDP path: an attested
+    device + a granting token allows; a tofu device is denied (below floor)."""
+    _enroll(tmp_path, mode=EnrollmentMode.ATTESTED, scopes=["skgateway.infer"])
+    _issue(tmp_path, ["skgateway.infer"])
+    allowed = decide(SUBJECT, "skgateway.infer", base_dir=tmp_path)
+    assert allowed.allow is True
+
+    # A fresh tofu-only subject cannot infer (attested floor).
+    tofu_subject = "carol@chef.skworld"
+    _enroll(tmp_path, mode=EnrollmentMode.TOFU, subject=tofu_subject, scopes=["skgateway.infer"])
+    _issue(tmp_path, ["skgateway.infer"], subject=tofu_subject)
+    denied = decide(tofu_subject, "skgateway.infer", base_dir=tmp_path)
+    assert denied.allow is False
+    assert "insufficient enrollment mode" in denied.reason
+
+
+def test_skgateway_admin_requires_verified(tmp_path):
+    """skgateway.admin is verified: an attested device is refused; verified passes."""
+    _enroll(tmp_path, mode=EnrollmentMode.ATTESTED, scopes=["skgateway.admin"])
+    _issue(tmp_path, ["skgateway.admin"])
+    denied = decide(SUBJECT, "skgateway.admin", base_dir=tmp_path)
+    assert denied.allow is False
+    assert "insufficient enrollment mode" in denied.reason
+
+    verified_subject = "dave@chef.skworld"
+    _enroll(
+        tmp_path, mode=EnrollmentMode.VERIFIED, subject=verified_subject, scopes=["skgateway.admin"]
+    )
+    _issue(tmp_path, ["skgateway.admin"], subject=verified_subject)
+    allowed = decide(verified_subject, "skgateway.admin", base_dir=tmp_path)
+    assert allowed.allow is True
