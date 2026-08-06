@@ -21,8 +21,8 @@ from skcapstone.pillars.memory import initialize_memory  # noqa: E402
 from skcapstone.pillars.security import initialize_security  # noqa: E402
 from skcapstone.pillars.sync import initialize_sync  # noqa: E402
 from skcapstone.pillars.trust import initialize_trust, record_trust_state  # noqa: E402
-from skcapstone.tokens import issue_token  # noqa: E402
 
+from capauth.tokens import issue_token  # noqa: E402
 from capauth.trust.graph import (  # noqa: E402
     FORMATTERS,
     TrustEdge,
