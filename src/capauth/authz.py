@@ -160,6 +160,53 @@ _SKCHAT_RULES: tuple[CapabilityRule, ...] = (
         minimum_mode=EnrollmentMode.TOFU,
         description="Read the subject's own inbox; least sensitive.",
     ),
+    # --- Five new capabilities (SKWorld Authorization Model L2.2, 2026-08-06). --
+    # Each gates a CLASS of action at one sensitivity tier (read=tofu,
+    # write=attested, act=verified), mirroring the gradient the three rows above
+    # already encode. Additive: the three shipped rules are untouched.
+    CapabilityRule(
+        capability="skchat.status",
+        required_capability="skchat.status",
+        minimum_mode=EnrollmentMode.TOFU,
+        description=(
+            "Read operational metadata (daemon status, peers, adapters, webrtc "
+            "info, agent state); a disclosure class distinct from message content."
+        ),
+    ),
+    CapabilityRule(
+        capability="skchat.media.write",
+        required_capability="skchat.media.write",
+        minimum_mode=EnrollmentMode.ATTESTED,
+        description=(
+            "Upload attachment bytes bound to the subject. Attested, not verified: "
+            "storing bytes does not by itself emit to the wire (the referencing "
+            "send is the verified step)."
+        ),
+    ),
+    CapabilityRule(
+        capability="skchat.voice",
+        required_capability="skchat.voice",
+        minimum_mode=EnrollmentMode.ATTESTED,
+        description="Run STT/TTS compute on the subject's behalf (transcribe, voice loop).",
+    ),
+    CapabilityRule(
+        capability="skchat.groups",
+        required_capability="skchat.groups",
+        minimum_mode=EnrollmentMode.VERIFIED,
+        description=(
+            "Mutate shared group state (create groups, membership, group calls); "
+            "verified because it changes OTHER subjects' memberships."
+        ),
+    ),
+    CapabilityRule(
+        capability="skchat.calls",
+        required_capability="skchat.calls",
+        minimum_mode=EnrollmentMode.VERIFIED,
+        description=(
+            "Ring peers, join calls, and mint LiveKit access tokens as the "
+            "identity; verified and operationally distinct from messaging."
+        ),
+    ),
 )
 
 #: The default, process-wide capability rule table, keyed by capability name.
