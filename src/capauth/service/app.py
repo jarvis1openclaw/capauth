@@ -32,16 +32,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
+from .. import integration as _integration
+from .. import resolve_capauth_home
 from ..authentik.nonce_store import issue, peek
 from ..authentik.stage import build_challenge, verify_auth_response
 from ..authentik.verifier import fingerprint_from_armor
-from .. import integration as _integration
-from .. import resolve_capauth_home
+from ..authz import Decision as AuthzDecision
+from ..authz import decide as authz_decide
 from .bunker import BunkerBroker, BunkerCapacityError, build_pairing_uri
-from .push import PushRegistry
 from .keystore import KeyStore
 from .oidc import build_oidc_router
 from .oidc.provider import discovery_document as _oidc_discovery_document
+from .push import PushRegistry
 
 logger = logging.getLogger("capauth.service")
 
@@ -51,6 +53,17 @@ SERVER_KEY_PASSPHRASE = os.environ.get("CAPAUTH_SERVER_KEY_PASSPHRASE", "")
 REQUIRE_APPROVAL = os.environ.get("CAPAUTH_REQUIRE_APPROVAL", "false").lower() == "true"
 DB_PATH = os.environ.get("CAPAUTH_DB_PATH", "")
 ADMIN_TOKEN = os.environ.get("CAPAUTH_ADMIN_TOKEN", "")
+
+# Authorization decide endpoint (POST /v1/authz/decide). A dedicated service
+# credential, SEPARATE from ADMIN_TOKEN so a trusted subapp backend (skgateway)
+# that needs the PDP never also holds key approve/revoke power (least privilege).
+# Fail closed: when this is empty the endpoint is DISABLED (503), so it is never
+# an open oracle by default. See the SKWorld Authorization Standard section 1.
+AUTHZ_TOKEN = os.environ.get("CAPAUTH_AUTHZ_TOKEN", "")
+# Injectable storage root for the PDP fact lookups (pairing devices + capability
+# tokens). Empty means use the real ~/.skcapstone registry (the PDP default).
+# Tests point this at a tmp_path so the endpoint stays hermetic.
+AUTHZ_BASE_DIR = os.environ.get("CAPAUTH_AUTHZ_BASE_DIR", "")
 
 # Upstream OIDC provider (Authentik) for the OAuth2 callback flow
 AUTHENTIK_CLIENT_ID = os.environ.get("AUTHENTIK_CLIENT_ID", "")
@@ -475,6 +488,104 @@ async def revoke_key(req: KeyActionRequest, request: Request) -> dict[str, Any]:
     if ks.revoke(req.fingerprint):
         return {"revoked": True, "fingerprint": req.fingerprint}
     raise HTTPException(status_code=404, detail="Key not found.")
+
+
+# ---------------------------------------------------------------------------
+# Authorization decision endpoint (POST /v1/authz/decide)
+#
+# The platform's ONE decision point (capauth.authz.decide) exposed over HTTP so
+# a NON-Python subapp backend (skgateway, Node) delegates the allow/deny instead
+# of porting the PDP (two PDPs drift). SKWorld Authorization Standard section 1;
+# design detail spec 2026-08-06 L1.8.
+#
+# This is a THIN wrapper: it authenticates the CALLER (a trusted service
+# credential), then calls decide() against the SAME token store. It does not
+# authenticate the SUBJECT: the caller is a PEP that has already authenticated
+# its subject and passes that already-authenticated identity here (exactly the
+# in-process contract). The audit obligation decide() returns is passed straight
+# back in the response so the calling PEP honors it the same way an in-process
+# caller does.
+#
+# GATING (conservative, security-adjacent): a dedicated bearer service
+# credential CAPAUTH_AUTHZ_TOKEN, distinct from the admin token (least
+# privilege). Unset -> the endpoint is DISABLED (503), so it is never an open
+# oracle that lets an anonymous internet caller probe arbitrary
+# (subject, capability) pairs. Operators MUST additionally bind/restrict the
+# service to loopback/tailnet at the network layer (the standard's
+# "loopback/tailnet only"); the bearer credential is the application-layer gate.
+# ---------------------------------------------------------------------------
+
+
+def _check_authz_caller(request: Request) -> None:
+    """Gate the decide endpoint to trusted service callers only.
+
+    Mirrors ``_check_admin`` but with its OWN credential so an authz caller
+    never inherits admin (key approve/revoke) power. Fails closed: when
+    ``CAPAUTH_AUTHZ_TOKEN`` is unset the endpoint is disabled entirely.
+    """
+    if not AUTHZ_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="Authz decide endpoint not configured. Set CAPAUTH_AUTHZ_TOKEN.",
+        )
+    auth = request.headers.get("Authorization", "")
+    if auth != f"Bearer {AUTHZ_TOKEN}":
+        raise HTTPException(status_code=403, detail="Invalid authz service token.")
+
+
+class AuthzDecideRequest(BaseModel):
+    """A PEP's request to the one PDP: may ``subject`` exercise ``capability``?
+
+    ``subject`` is the caller-side ALREADY-AUTHENTICATED identity (e.g. an fqid);
+    this endpoint does not re-authenticate it. ``resource`` / ``context`` mirror
+    ``capauth.authz.decide`` (a ``trust_signal`` in context is advisory only and
+    never gates the decision).
+    """
+
+    subject: str = Field(description="Already-authenticated subject identity (e.g. an fqid)")
+    capability: str = Field(description="Requested capability, e.g. 'skgateway.infer'")
+    resource: Optional[dict] = Field(default=None, description="Action target; recorded on audit")
+    context: Optional[dict] = Field(default=None, description="Advisory context; never gates allow")
+
+
+@app.post("/v1/authz/decide", response_model=AuthzDecision)
+async def authz_decide_endpoint(req: AuthzDecideRequest, request: Request) -> AuthzDecision:
+    """Return the PDP allow/deny for ``(subject, capability, resource, context)``.
+
+    Thin wrapper over ``capauth.authz.decide`` (the ONE decision point). Fails
+    closed on every uncertainty: a bad caller credential is refused before any
+    decision runs; a blank subject/capability is a 400; and any PDP error is
+    returned as a DENY rather than a 500 so a fault never accidentally allows.
+    """
+    _check_authz_caller(request)
+
+    # Fail closed on structurally-present-but-empty input. (Entirely missing
+    # fields are rejected by pydantic with 422 before we get here.)
+    subject = (req.subject or "").strip()
+    capability = (req.capability or "").strip()
+    if not subject or not capability:
+        raise HTTPException(status_code=400, detail="subject and capability are required.")
+
+    base_dir = Path(AUTHZ_BASE_DIR) if AUTHZ_BASE_DIR else None
+    try:
+        decision = authz_decide(
+            subject,
+            capability,
+            req.resource,
+            req.context,
+            base_dir=base_dir,
+        )
+    except Exception as exc:  # pragma: no cover - defensive; PDP is pure + fail-closed
+        logger.warning("authz decide error for subject=%s capability=%s: %s", subject, capability, exc)
+        return AuthzDecision(allow=False, reason=f"pdp error: {exc}", obligations=[])
+
+    logger.info(
+        "authz.decide subject=%s capability=%s -> %s",
+        subject,
+        capability,
+        "allow" if decision.allow else "deny",
+    )
+    return decision
 
 
 # ---------------------------------------------------------------------------
