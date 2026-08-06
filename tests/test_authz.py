@@ -267,7 +267,35 @@ def test_trust_signal_never_flips_deny_to_allow(tmp_path):
 # rule table
 # --------------------------------------------------------------------------- #
 def test_default_rules_seed_the_three_skchat_capabilities():
-    assert set(DEFAULT_RULES) == {"skchat.send", "skchat.inbox", "skchat.prekey"}
+    # The three shipped rows are unchanged (mode floors preserved exactly).
+    assert {"skchat.send", "skchat.inbox", "skchat.prekey"} <= set(DEFAULT_RULES)
     assert DEFAULT_RULES["skchat.send"].minimum_mode is EnrollmentMode.VERIFIED
     assert DEFAULT_RULES["skchat.prekey"].minimum_mode is EnrollmentMode.ATTESTED
     assert DEFAULT_RULES["skchat.inbox"].minimum_mode is EnrollmentMode.TOFU
+
+
+def test_default_rules_include_the_five_new_skchat_capabilities():
+    """SKWorld Authorization Model L2.2: 8 capabilities total (3 shipped + 5 new),
+    each at the tier->mode the taxonomy assigns (read=tofu, write=attested,
+    act=verified)."""
+    assert set(DEFAULT_RULES) == {
+        "skchat.send",
+        "skchat.inbox",
+        "skchat.prekey",
+        "skchat.status",
+        "skchat.media.write",
+        "skchat.voice",
+        "skchat.groups",
+        "skchat.calls",
+    }
+    # read tier -> tofu
+    assert DEFAULT_RULES["skchat.status"].minimum_mode is EnrollmentMode.TOFU
+    # write tier -> attested
+    assert DEFAULT_RULES["skchat.media.write"].minimum_mode is EnrollmentMode.ATTESTED
+    assert DEFAULT_RULES["skchat.voice"].minimum_mode is EnrollmentMode.ATTESTED
+    # act tier -> verified
+    assert DEFAULT_RULES["skchat.groups"].minimum_mode is EnrollmentMode.VERIFIED
+    assert DEFAULT_RULES["skchat.calls"].minimum_mode is EnrollmentMode.VERIFIED
+    # every rule's required_capability equals its own name (self-granting rows)
+    for name, rule in DEFAULT_RULES.items():
+        assert rule.required_capability == name
