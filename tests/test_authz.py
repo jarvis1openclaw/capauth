@@ -348,3 +348,52 @@ def test_skgateway_admin_requires_verified(tmp_path):
     _issue(tmp_path, ["skgateway.admin"], subject=verified_subject)
     allowed = decide(verified_subject, "skgateway.admin", base_dir=tmp_path)
     assert allowed.allow is True
+
+
+def test_default_rules_include_the_skcode_rce_capabilities():
+    """CR-6.2 C3: the two skcode RCE capabilities are seeded rows in the shared
+    PDP table, not per-callsite injections. Both take the VERIFIED floor (spawn
+    and keystroke-inject each act AS the subject with the widest blast radius).
+    ``skcode.stream`` stays scope-only, so it is deliberately NOT a rule row."""
+    assert {"skcode.dispatch", "skcode.inject"} <= set(DEFAULT_RULES)
+    assert DEFAULT_RULES["skcode.dispatch"].minimum_mode is EnrollmentMode.VERIFIED
+    assert DEFAULT_RULES["skcode.inject"].minimum_mode is EnrollmentMode.VERIFIED
+    # self-granting rows, like every other rule
+    assert DEFAULT_RULES["skcode.dispatch"].required_capability == "skcode.dispatch"
+    assert DEFAULT_RULES["skcode.inject"].required_capability == "skcode.inject"
+    # skcode.stream is a scope-only read capability: NO PDP rule row by design.
+    assert "skcode.stream" not in DEFAULT_RULES
+
+
+def test_skcode_inject_requires_verified(tmp_path):
+    """skcode.inject is verified: an attested device is refused; verified passes.
+    This is the enrollment-mode floor CR-6.2 moves into code (was scope-only)."""
+    _enroll(tmp_path, mode=EnrollmentMode.ATTESTED, scopes=["skcode.inject"])
+    _issue(tmp_path, ["skcode.inject"])
+    denied = decide(SUBJECT, "skcode.inject", base_dir=tmp_path)
+    assert denied.allow is False
+    assert "insufficient enrollment mode" in denied.reason
+
+    verified_subject = "erin@chef.skworld"
+    _enroll(
+        tmp_path, mode=EnrollmentMode.VERIFIED, subject=verified_subject, scopes=["skcode.inject"]
+    )
+    _issue(tmp_path, ["skcode.inject"], subject=verified_subject)
+    allowed = decide(verified_subject, "skcode.inject", base_dir=tmp_path)
+    assert allowed.allow is True
+
+
+def test_skcode_dispatch_requires_verified(tmp_path):
+    """skcode.dispatch (spawn/RCE) decides through the same PDP path at the
+    verified floor: a tofu device is denied, a verified device with a grant
+    allows."""
+    tofu_subject = "frank@chef.skworld"
+    _enroll(tmp_path, mode=EnrollmentMode.TOFU, subject=tofu_subject, scopes=["skcode.dispatch"])
+    _issue(tmp_path, ["skcode.dispatch"], subject=tofu_subject)
+    denied = decide(tofu_subject, "skcode.dispatch", base_dir=tmp_path)
+    assert denied.allow is False
+
+    _enroll(tmp_path, mode=EnrollmentMode.VERIFIED, scopes=["skcode.dispatch"])
+    _issue(tmp_path, ["skcode.dispatch"])
+    allowed = decide(SUBJECT, "skcode.dispatch", base_dir=tmp_path)
+    assert allowed.allow is True

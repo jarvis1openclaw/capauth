@@ -246,11 +246,45 @@ _SKGATEWAY_RULES: tuple[CapabilityRule, ...] = (
     ),
 )
 
+# The skcode capability rules (SKWorld Authorization Model L1.8; CR-6.2 pre-inject
+# security review, C3). skcode-hostd is the RCE surface: dispatch spawns a NEW
+# coding-agent session (arbitrary command execution) and inject drives keystrokes
+# into a running session's PTY. Both act AS the subject with the widest possible
+# blast radius, so both take the VERIFIED floor, matching ``skchat.groups`` /
+# ``skchat.calls`` (act-class). Previously ``skcode.dispatch`` existed only as a
+# ``rules=`` injection at the daemon call site and ``skcode.inject`` had no PDP row
+# at all (it was scope-only); seeding both here makes "the authz map is complete"
+# a shared PDP fact instead of a per-callsite detail. ``skcode.stream`` stays
+# scope-only (a read/view capability with no PDP decision), so it is deliberately
+# NOT seeded here.
+_SKCODE_RULES: tuple[CapabilityRule, ...] = (
+    CapabilityRule(
+        capability="skcode.dispatch",
+        required_capability="skcode.dispatch",
+        minimum_mode=EnrollmentMode.VERIFIED,
+        description=(
+            "Spawn a NEW agent session (RCE): arbitrary command execution AS the "
+            "subject; the most sensitive capability, verified only."
+        ),
+    ),
+    CapabilityRule(
+        capability="skcode.inject",
+        required_capability="skcode.inject",
+        minimum_mode=EnrollmentMode.VERIFIED,
+        description=(
+            "Send operator keystrokes into a running agent session's PTY (RCE): "
+            "drives a live agent AS the subject; verified only."
+        ),
+    ),
+)
+
 #: The default, process-wide capability rule table, keyed by capability name.
-#: The seeded skchat rows plus the skgateway rows (L1.8). Additive: every prior
-#: row is untouched; new subapps append their own ``<subapp>.*`` namespace here.
+#: The seeded skchat rows plus the skgateway rows (L1.8) plus the skcode RCE rows
+#: (CR-6.2 C3). Additive: every prior row is untouched; new subapps append their
+#: own ``<subapp>.*`` namespace here.
 DEFAULT_RULES: dict[str, CapabilityRule] = {
-    rule.capability: rule for rule in (*_SKCHAT_RULES, *_SKGATEWAY_RULES)
+    rule.capability: rule
+    for rule in (*_SKCHAT_RULES, *_SKGATEWAY_RULES, *_SKCODE_RULES)
 }
 
 
