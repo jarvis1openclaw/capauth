@@ -223,6 +223,62 @@ class TestTokenRevocation:
         assert revoke_token(agent_home, "same-id")
         assert revoke_token(agent_home, "same-id")
 
+    def test_verify_token_rejects_revoked_token(self, agent_home: Path, monkeypatch):
+        """CR-3.4 P2: a signed, in-window token that has been REVOKED must fail
+        verify_token (previously only the PDP consulted the revocation list)."""
+        token = issue_token(
+            home=agent_home,
+            subject="test",
+            capabilities=["*"],
+            sign=False,
+        )
+        # Give it a passing signature (isolate the revocation gate from PGP).
+        token.signature = "-----BEGIN PGP SIGNATURE-----\nstub\n-----END PGP SIGNATURE-----"
+        monkeypatch.setattr(
+            "capauth.tokens._pgp_verify_signature", lambda p, s, h=None: True
+        )
+        # Not revoked yet -> passes.
+        assert verify_token(token, agent_home) is True
+        # Revoke it -> now rejected even though signature + time window are fine.
+        revoke_token(agent_home, token.payload.token_id)
+        assert verify_token(token, agent_home) is False
+
+    def test_verify_token_passes_non_revoked_token(self, agent_home: Path, monkeypatch):
+        """CR-3.4 P2: the revocation gate does not disturb a normal (non-revoked)
+        token: a signed, in-window, unrevoked token still verifies."""
+        token = issue_token(
+            home=agent_home,
+            subject="test",
+            capabilities=["*"],
+            sign=False,
+        )
+        token.signature = "-----BEGIN PGP SIGNATURE-----\nstub\n-----END PGP SIGNATURE-----"
+        monkeypatch.setattr(
+            "capauth.tokens._pgp_verify_signature", lambda p, s, h=None: True
+        )
+        assert is_revoked(agent_home, token.payload.token_id) is False
+        assert verify_token(token, agent_home) is True
+
+    def test_verify_audience_token_rejects_revoked(self, agent_home: Path, monkeypatch):
+        """CR-3.4 P2: revocation flows through verify_audience_token too (the
+        skchat accept path), so a revoked audience token is rejected there."""
+        from capauth.tokens import mint_audience_token, verify_audience_token
+
+        token = mint_audience_token(
+            home=agent_home,
+            subject="operator:abc123",
+            audience="skchat",
+            scopes=["chat.read", "chat.send"],
+            sign=False,
+        )
+        token.signature = "-----BEGIN PGP SIGNATURE-----\nstub\n-----END PGP SIGNATURE-----"
+        monkeypatch.setattr(
+            "capauth.tokens._pgp_verify_signature", lambda p, s, h=None: True
+        )
+        assert verify_audience_token(token, "skchat", home=agent_home) is True
+        revoke_token(agent_home, token.payload.token_id)
+        assert verify_audience_token(token, "skchat", home=agent_home) is False
+
 
 class TestTokenListAndExport:
     """Tests for listing and exporting tokens."""

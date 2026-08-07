@@ -253,6 +253,28 @@ def verify_token(token: SignedToken, home: Optional[Path] = None) -> bool:
         )
         return False
 
+    # Revocation gate (CR-3.4 P2): a revoked token must fail verification even
+    # with a valid, in-window signature. Historically only the PDP consulted the
+    # revocation list; a bare verify_token / verify_audience_token (the skchat
+    # accept path) affirmed a revoked token. This closes that asymmetry: a
+    # revoked token is now rejected everywhere verify_token affirms.
+    #
+    # ``is_revoked`` needs a home to locate the revocation file, so resolve the
+    # default home when the caller did not pass one (the audience accept path
+    # calls with ``home=None``). Guarded so a revocation-list read error never
+    # crashes verification; a non-revoked token is unaffected.
+    try:
+        revocation_home = home
+        if revocation_home is None:
+            from . import resolve_capauth_home
+
+            revocation_home = resolve_capauth_home()
+        if is_revoked(revocation_home, token.payload.token_id):
+            logger.warning("Token %s is revoked", token.payload.token_id[:12])
+            return False
+    except Exception:  # noqa: BLE001 - never let a revocation read crash verify
+        logger.debug("revocation check errored for %s", token.payload.token_id[:12])
+
     if token.signature:
         verified = _pgp_verify_signature(token.payload, token.signature, home)
         token.verified = verified
