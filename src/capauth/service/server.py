@@ -28,8 +28,12 @@ import click
 
 
 @click.command()
-@click.option("--host", envvar="CAPAUTH_SERVICE_HOST", default="127.0.0.1",
-              help="Bind address (default: loopback; env CAPAUTH_SERVICE_HOST).")
+@click.option(
+    "--host",
+    envvar="CAPAUTH_SERVICE_HOST",
+    default="127.0.0.1",
+    help="Bind address (default: loopback; env CAPAUTH_SERVICE_HOST).",
+)
 @click.option("--port", default=8420, type=int, help="Listen port.")
 @click.option("--reload", "do_reload", is_flag=True, help="Auto-reload on code changes.")
 def main(host: str, port: int, do_reload: bool) -> None:
