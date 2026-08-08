@@ -55,8 +55,11 @@ def throwaway_gpg(tmp_path, monkeypatch):
     )
     assert r.returncode == 0, r.stderr.decode()
     yield TEST_EMAIL
-    subprocess.run(["gpgconf", "--kill", "gpg-agent"], capture_output=True,
-                   env={**__import__("os").environ, "GNUPGHOME": str(gnupghome)})
+    subprocess.run(
+        ["gpgconf", "--kill", "gpg-agent"],
+        capture_output=True,
+        env={**__import__("os").environ, "GNUPGHOME": str(gnupghome)},
+    )
 
 
 def test_gpg_available(throwaway_gpg):
@@ -119,13 +122,15 @@ def test_unseal_locked_returns_none(throwaway_gpg):
 
     fp = subprocess.run(
         ["gpg", "--batch", "--with-colons", "--list-secret-keys", TEST_EMAIL],
-        capture_output=True, text=True, env={**os.environ},
+        capture_output=True,
+        text=True,
+        env={**os.environ},
     ).stdout
     fpr = next(l.split(":")[9] for l in fp.splitlines() if l.startswith("fpr"))
     subprocess.run(
-        ["gpg", "--batch", "--yes", "--pinentry-mode", "loopback",
-         "--delete-secret-keys", fpr],
-        capture_output=True, env={**os.environ},
+        ["gpg", "--batch", "--yes", "--pinentry-mode", "loopback", "--delete-secret-keys", fpr],
+        capture_output=True,
+        env={**os.environ},
     )
     subprocess.run(["gpgconf", "--kill", "gpg-agent"], capture_output=True)
     assert unseal(ct) is None
@@ -154,7 +159,9 @@ def _throwaway_fpr():
 
     out = subprocess.run(
         ["gpg", "--batch", "--with-colons", "--list-keys", TEST_EMAIL],
-        capture_output=True, text=True, env={**os.environ},
+        capture_output=True,
+        text=True,
+        env={**os.environ},
     ).stdout
     return next(l.split(":")[9] for l in out.splitlines() if l.startswith("fpr"))
 
@@ -210,7 +217,9 @@ def test_ambiguous_uid_rejected(throwaway_gpg, monkeypatch):
     )
     r = subprocess.run(
         ["gpg", "--batch", "--pinentry-mode", "loopback", "--gen-key"],
-        input=batch.encode(), capture_output=True, env={**os.environ},
+        input=batch.encode(),
+        capture_output=True,
+        env={**os.environ},
     )
     assert r.returncode == 0, r.stderr.decode()
     with pytest.raises(SealTrustError):
@@ -315,9 +324,9 @@ def test_unseal_verify_locked_returns_none(throwaway_gpg, monkeypatch):
     ct = seal("sealed while unlocked")
     fpr = _throwaway_fpr()
     subprocess.run(
-        ["gpg", "--batch", "--yes", "--pinentry-mode", "loopback",
-         "--delete-secret-keys", fpr],
-        capture_output=True, env={**os.environ},
+        ["gpg", "--batch", "--yes", "--pinentry-mode", "loopback", "--delete-secret-keys", fpr],
+        capture_output=True,
+        env={**os.environ},
     )
     subprocess.run(["gpgconf", "--kill", "gpg-agent"], capture_output=True)
     res = unseal_verify(ct)

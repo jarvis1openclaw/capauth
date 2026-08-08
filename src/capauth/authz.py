@@ -283,8 +283,7 @@ _SKCODE_RULES: tuple[CapabilityRule, ...] = (
 #: (CR-6.2 C3). Additive: every prior row is untouched; new subapps append their
 #: own ``<subapp>.*`` namespace here.
 DEFAULT_RULES: dict[str, CapabilityRule] = {
-    rule.capability: rule
-    for rule in (*_SKCHAT_RULES, *_SKGATEWAY_RULES, *_SKCODE_RULES)
+    rule.capability: rule for rule in (*_SKCHAT_RULES, *_SKGATEWAY_RULES, *_SKCODE_RULES)
 }
 
 
@@ -465,9 +464,7 @@ def decide(
         )
 
     usable = [
-        t
-        for t in granting
-        if t.payload.is_active and not is_revoked(home, t.payload.token_id)
+        t for t in granting if t.payload.is_active and not is_revoked(home, t.payload.token_id)
     ]
     if not usable:
         # A grant exists but every one is expired / not-yet-valid / revoked.

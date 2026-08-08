@@ -126,8 +126,11 @@ def test_relay_sign_request_client_to_signer():
     # The signer received the EXACT envelope (broker is pass-through).
     assert signer_ws.sent[-1] == req
     # The client did not receive its own request echoed.
-    assert all(m.get("id") != "req-1" or m["type"] != "sign_request"
-               for m in client_ws.sent if m.get("type") == "sign_request")
+    assert all(
+        m.get("id") != "req-1" or m["type"] != "sign_request"
+        for m in client_ws.sent
+        if m.get("type") == "sign_request"
+    )
 
 
 def test_relay_sign_response_signer_to_client():
@@ -280,20 +283,20 @@ def test_ws_endpoint_pairs_and_relays_end_to_end():
     secret = sess["pairing_secret"]
     assert sess["pairing_uri"].startswith("capauth-bunker://")
 
-    with client.websocket_connect(
-        f"/bunker/ws?session={sid}&role=client&key={secret}"
-    ) as cws:
-        with client.websocket_connect(
-            f"/bunker/ws?session={sid}&role=signer&key={secret}"
-        ) as sws:
+    with client.websocket_connect(f"/bunker/ws?session={sid}&role=client&key={secret}") as cws:
+        with client.websocket_connect(f"/bunker/ws?session={sid}&role=signer&key={secret}") as sws:
             # Both should get a paired event.
             assert cws.receive_json()["type"] == "paired"
             assert sws.receive_json()["type"] == "paired"
 
             # Client → signer: the canonical bytes.
             cws.send_json(
-                {"type": "sign_request", "id": "r1", "payload": canonical,
-                 "origin": "https://cloud.example.org"}
+                {
+                    "type": "sign_request",
+                    "id": "r1",
+                    "payload": canonical,
+                    "origin": "https://cloud.example.org",
+                }
             )
             got = sws.receive_json()
             assert got["type"] == "sign_request"
@@ -316,9 +319,7 @@ def test_ws_endpoint_rejects_bad_secret():
     client = TestClient(app)
     sess = client.post("/bunker/session").json()
     sid = sess["session_id"]
-    with client.websocket_connect(
-        f"/bunker/ws?session={sid}&role=client&key=wrong"
-    ) as ws:
+    with client.websocket_connect(f"/bunker/ws?session={sid}&role=client&key=wrong") as ws:
         msg = ws.receive_json()
         assert msg["type"] == "error"
         assert msg["code"] == "bad_pairing_secret"

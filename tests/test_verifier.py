@@ -47,9 +47,7 @@ class TestCanonicalPayloads:
 
     def test_nonce_payload_v2_header_when_origin_present(self):
         """Supplying an origin emits the V2 header."""
-        payload = canonical_nonce_payload(
-            "n", "c", "t", "s", "e", origin="https://x.io"
-        )
+        payload = canonical_nonce_payload("n", "c", "t", "s", "e", origin="https://x.io")
         assert payload.startswith(b"CAPAUTH_NONCE_V2")
 
     def test_nonce_payload_v2_origin_line_position(self):
@@ -70,8 +68,12 @@ class TestCanonicalPayloads:
         """Python output must match the shared cross-impl V2 test vector bytes."""
         f = VECTOR["fields"]
         payload = canonical_nonce_payload(
-            f["nonce"], f["client_nonce"], f["timestamp"], f["service"],
-            f["expires"], origin=f["origin"],
+            f["nonce"],
+            f["client_nonce"],
+            f["timestamp"],
+            f["service"],
+            f["expires"],
+            origin=f["origin"],
         )
         assert payload.decode("utf-8") == VECTOR["expected_v2"]
 
@@ -79,7 +81,11 @@ class TestCanonicalPayloads:
         """Legacy V1 output must match the shared cross-impl V1 test vector bytes."""
         f = VECTOR["fields"]
         payload = canonical_nonce_payload(
-            f["nonce"], f["client_nonce"], f["timestamp"], f["service"], f["expires"],
+            f["nonce"],
+            f["client_nonce"],
+            f["timestamp"],
+            f["service"],
+            f["expires"],
         )
         assert payload.decode("utf-8") == VECTOR["expected_v1"]
 
@@ -111,9 +117,7 @@ class TestOriginBinding:
         assert ok
 
     def test_origin_match_against_list(self):
-        ok, _ = check_origin(
-            "https://b.example", ["https://a.example", "https://b.example"]
-        )
+        ok, _ = check_origin("https://b.example", ["https://a.example", "https://b.example"])
         assert ok
 
     def test_v1_accepted_when_binding_not_required(self):

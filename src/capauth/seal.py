@@ -312,9 +312,7 @@ def seal_meta(
                 RuntimeWarning,
                 stacklevel=2,
             )
-            unsigned = seal_meta(
-                plaintext, to=rcpts, sign_by="", allow_unsigned=allow_unsigned
-            )
+            unsigned = seal_meta(plaintext, to=rcpts, sign_by="", allow_unsigned=allow_unsigned)
             return SealResult(
                 ciphertext=unsigned.ciphertext,
                 signed=False,
@@ -350,9 +348,7 @@ def seal(
     Returns the armored ciphertext string (backward-compatible). Use `seal_meta()` for the
     structured provenance result.
     """
-    return seal_meta(
-        plaintext, to=to, sign_by=sign_by, allow_unsigned=allow_unsigned
-    ).ciphertext
+    return seal_meta(plaintext, to=to, sign_by=sign_by, allow_unsigned=allow_unsigned).ciphertext
 
 
 def unseal(ciphertext: str) -> str | None:
@@ -439,7 +435,7 @@ def unseal_verify(
     for line in status.splitlines():
         if not line.startswith("[GNUPG:] "):
             continue
-        parts = line[len("[GNUPG:] "):].split()
+        parts = line[len("[GNUPG:] ") :].split()
         if not parts:
             continue
         tag = parts[0]

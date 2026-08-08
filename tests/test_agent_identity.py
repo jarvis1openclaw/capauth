@@ -34,9 +34,7 @@ from capauth.agent_identity import (
 
 class TestAgentIdentity:
     def test_uri_alias(self):
-        ident = AgentIdentity(
-            agent="lumina", capauth_uri="capauth:lumina@skworld.io"
-        )
+        ident = AgentIdentity(agent="lumina", capauth_uri="capauth:lumina@skworld.io")
         assert ident.uri == ident.capauth_uri
 
     def test_to_dict_keys(self):
@@ -83,9 +81,7 @@ class TestBuildFqid:
 class TestLoadCluster:
     def test_loads_from_tmp(self, tmp_path: Path):
         cluster_file = tmp_path / "cluster.json"
-        cluster_file.write_text(
-            json.dumps({"realm": "skworld", "operator": "chef"})
-        )
+        cluster_file.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
         from capauth import agent_identity
 
         original = agent_identity._CLUSTER_LOOKUP
@@ -121,9 +117,7 @@ class TestResolveExplicit:
 
     def test_fqid_with_cluster(self, tmp_path: Path):
         cluster_file = tmp_path / "cluster.json"
-        cluster_file.write_text(
-            json.dumps({"realm": "skworld", "operator": "chef"})
-        )
+        cluster_file.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
         from capauth import agent_identity
 
         original = agent_identity._CLUSTER_LOOKUP
@@ -150,9 +144,7 @@ class TestResolveExplicit:
         profile_dir = tmp_path / "identity"
         profile_dir.mkdir(parents=True)
         profile_json = profile_dir / "profile.json"
-        profile_json.write_text(
-            json.dumps({"key_info": {"fingerprint": fake_fp}})
-        )
+        profile_json.write_text(json.dumps({"key_info": {"fingerprint": fake_fp}}))
         from capauth import agent_identity
 
         original_fn = agent_identity._agent_capauth_dir
@@ -207,8 +199,7 @@ class TestResolveAutoEnv:
         with patch.dict(os.environ, env, clear=False):
             # Remove SKAGENT to ensure legacy fallback
             env_without_skagent = {
-                k: v for k, v in {**os.environ, **env}.items()
-                if k != "SKAGENT"
+                k: v for k, v in {**os.environ, **env}.items() if k != "SKAGENT"
             }
             with patch.dict(os.environ, env_without_skagent, clear=True):
                 ident = resolve_agent_identity(None)
@@ -217,7 +208,8 @@ class TestResolveAutoEnv:
     def test_local_when_no_env(self):
         # Strip all agent env vars; skmemory may or may not be installed
         env_clean = {
-            k: v for k, v in os.environ.items()
+            k: v
+            for k, v in os.environ.items()
             if k not in ("SKAGENT", "SKCAPSTONE_AGENT", "SKMEMORY_AGENT")
         }
         with patch.dict(os.environ, env_clean, clear=True):
@@ -454,9 +446,7 @@ class TestResolveActiveAgentName:
         assert name != "lumina-template"
         # And resolve_agent_identity floors a template SKAGENT to "local".
         with patch.dict(os.environ, env, clear=True):
-            with patch.object(
-                agent_identity, "_resolve_active_agent_name", return_value=None
-            ):
+            with patch.object(agent_identity, "_resolve_active_agent_name", return_value=None):
                 assert resolve_agent_identity(None).agent == "local"
 
     def test_skmemory_agent_legacy_fallback(self):
@@ -479,8 +469,6 @@ class TestConfidentialityDelegation:
     def test_classical_suite_when_no_prekey(self, tmp_path: Path, monkeypatch):
         """With no published hybrid prekey, the suite is the classical wrap."""
         monkeypatch.setenv("SKCHAT_HOME", str(tmp_path))  # empty → no prekey
-        ident = AgentIdentity(
-            agent="nobody", capauth_uri="capauth:nobody@skworld.io"
-        )
+        ident = AgentIdentity(agent="nobody", capauth_uri="capauth:nobody@skworld.io")
         assert ident.hybrid_prekey_available() is False
         assert ident.confidentiality_suite() == "x25519-pgp-wrap-v1"

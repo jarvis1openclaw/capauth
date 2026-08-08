@@ -97,15 +97,21 @@ class TestChallengeTTL:
         bad_now = _at(challenge, 11)
         assert (
             verify_challenge(
-                challenge, response, keys.public_armor,
-                max_age_seconds=10, _now=ok_now,
+                challenge,
+                response,
+                keys.public_armor,
+                max_age_seconds=10,
+                _now=ok_now,
             )
             is True
         )
         with pytest.raises(ChallengeExpiredError):
             verify_challenge(
-                challenge, response, keys.public_armor,
-                max_age_seconds=10, _now=bad_now,
+                challenge,
+                response,
+                keys.public_armor,
+                max_age_seconds=10,
+                _now=bad_now,
             )
 
     def test_opt_out_accepts_old_challenge(self, keys, signed_pair):
@@ -114,8 +120,11 @@ class TestChallengeTTL:
         now = _at(challenge, 10 * 24 * 3600)  # ten days later
         assert (
             verify_challenge(
-                challenge, response, keys.public_armor,
-                max_age_seconds=None, _now=now,
+                challenge,
+                response,
+                keys.public_armor,
+                max_age_seconds=None,
+                _now=now,
             )
             is True
         )
@@ -136,14 +145,10 @@ class TestChallengeTTL:
     def test_naive_created_treated_as_utc(self, keys, signed_pair):
         """A tz-less created timestamp must not crash and is read as UTC."""
         challenge, response = signed_pair
-        naive = challenge.model_copy(
-            update={"created": challenge.created.replace(tzinfo=None)}
-        )
+        naive = challenge.model_copy(update={"created": challenge.created.replace(tzinfo=None)})
         now = challenge.created + timedelta(seconds=30)
         assert verify_challenge(naive, response, keys.public_armor, _now=now) is True
-        late = challenge.created + timedelta(
-            seconds=DEFAULT_MAX_CHALLENGE_AGE_SECONDS + 60
-        )
+        late = challenge.created + timedelta(seconds=DEFAULT_MAX_CHALLENGE_AGE_SECONDS + 60)
         with pytest.raises(ChallengeExpiredError):
             verify_challenge(naive, response, keys.public_armor, _now=late)
 
@@ -152,9 +157,7 @@ class TestChallengeTTL:
         challenge, response = signed_pair
         now = _at(challenge, DEFAULT_MAX_CHALLENGE_AGE_SECONDS + 60)
         with pytest.raises(ChallengeExpiredError):
-            verify_challenge(
-                challenge, response, "NOT A VALID PUBLIC KEY", _now=now
-            )
+            verify_challenge(challenge, response, "NOT A VALID PUBLIC KEY", _now=now)
 
 
 class TestInMemoryReplayGuard:
@@ -185,9 +188,7 @@ class TestInMemoryReplayGuard:
 
     def test_naive_expiry_treated_as_utc(self):
         guard = InMemoryReplayGuard()
-        naive_exp = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
-            minutes=5
-        )
+        naive_exp = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
         assert guard("naive-1", naive_exp) is True
         assert guard("naive-1", naive_exp) is False
 
@@ -201,28 +202,30 @@ class TestVerifyChallengeReplayGuard:
         now = _at(challenge, 1)
         assert (
             verify_challenge(
-                challenge, response, keys.public_armor,
-                replay_guard=guard, _now=now,
+                challenge,
+                response,
+                keys.public_armor,
+                replay_guard=guard,
+                _now=now,
             )
             is True
         )
         with pytest.raises(ChallengeReplayError, match="replay"):
             verify_challenge(
-                challenge, response, keys.public_armor,
-                replay_guard=guard, _now=now,
+                challenge,
+                response,
+                keys.public_armor,
+                replay_guard=guard,
+                _now=now,
             )
 
     def test_replay_error_is_a_verification_error(self, keys, signed_pair):
         challenge, response = signed_pair
         guard = InMemoryReplayGuard()
         now = _at(challenge, 1)
-        verify_challenge(
-            challenge, response, keys.public_armor, replay_guard=guard, _now=now
-        )
+        verify_challenge(challenge, response, keys.public_armor, replay_guard=guard, _now=now)
         with pytest.raises(VerificationError):
-            verify_challenge(
-                challenge, response, keys.public_armor, replay_guard=guard, _now=now
-            )
+            verify_challenge(challenge, response, keys.public_armor, replay_guard=guard, _now=now)
 
     def test_failed_verification_does_not_consume_nonce(self, keys, signed_pair):
         """Only a successful verification records the challenge as seen."""
@@ -232,14 +235,20 @@ class TestVerifyChallengeReplayGuard:
         tampered = response.model_copy(update={"responder_fingerprint": "B" * 40})
         with pytest.raises(VerificationError, match="Fingerprint mismatch"):
             verify_challenge(
-                challenge, tampered, keys.public_armor,
-                replay_guard=guard, _now=now,
+                challenge,
+                tampered,
+                keys.public_armor,
+                replay_guard=guard,
+                _now=now,
             )
         # The genuine response still works: the failed attempt burned nothing.
         assert (
             verify_challenge(
-                challenge, response, keys.public_armor,
-                replay_guard=guard, _now=now,
+                challenge,
+                response,
+                keys.public_armor,
+                replay_guard=guard,
+                _now=now,
             )
             is True
         )
@@ -258,16 +267,22 @@ class TestVerifyChallengeReplayGuard:
         now = _at(challenge, 1)
         assert (
             verify_challenge(
-                challenge, response, keys.public_armor,
-                replay_guard=my_guard, _now=now,
+                challenge,
+                response,
+                keys.public_armor,
+                replay_guard=my_guard,
+                _now=now,
             )
             is True
         )
         assert challenge.challenge_id in seen
         with pytest.raises(ChallengeReplayError):
             verify_challenge(
-                challenge, response, keys.public_armor,
-                replay_guard=my_guard, _now=now,
+                challenge,
+                response,
+                keys.public_armor,
+                replay_guard=my_guard,
+                _now=now,
             )
 
     def test_guard_with_ttl_opt_out_still_gets_expiry(self, keys, signed_pair):
@@ -282,11 +297,13 @@ class TestVerifyChallengeReplayGuard:
 
         now = _at(challenge, 1)
         verify_challenge(
-            challenge, response, keys.public_armor,
-            max_age_seconds=None, replay_guard=capturing_guard, _now=now,
+            challenge,
+            response,
+            keys.public_armor,
+            max_age_seconds=None,
+            replay_guard=capturing_guard,
+            _now=now,
         )
         assert len(captured) == 1
-        expected = challenge.created + timedelta(
-            seconds=DEFAULT_MAX_CHALLENGE_AGE_SECONDS
-        )
+        expected = challenge.created + timedelta(seconds=DEFAULT_MAX_CHALLENGE_AGE_SECONDS)
         assert captured[0] == expected

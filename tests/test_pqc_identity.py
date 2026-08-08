@@ -23,9 +23,7 @@ from capauth.models import Algorithm
 pqsig = pytest.importorskip("skcomms.pqsig")
 from capauth import pqc_identity  # noqa: E402
 
-pytestmark = pytest.mark.skipif(
-    not pqsig.is_available(), reason="liboqs (oqs) not available"
-)
+pytestmark = pytest.mark.skipif(not pqsig.is_available(), reason="liboqs (oqs) not available")
 
 PASS_A = "alice-2026"
 PASS_B = "bob-2026"
@@ -62,9 +60,7 @@ def test_hybrid_roundtrip_verifies(alice_keys, bob_keys, bob_hybrid):
     resp = pqc_identity.respond_to_challenge_hybrid(
         challenge, bob_keys.private_armor, PASS_B, hybrid_keypair=bob_hybrid
     )
-    assert pqc_identity.verify_challenge_hybrid(
-        challenge, resp, bob_keys.public_armor
-    ) is True
+    assert pqc_identity.verify_challenge_hybrid(challenge, resp, bob_keys.public_armor) is True
 
 
 def test_hybrid_tampered_challenge_rejected(alice_keys, bob_keys, bob_hybrid):
@@ -72,7 +68,9 @@ def test_hybrid_tampered_challenge_rejected(alice_keys, bob_keys, bob_hybrid):
     resp = pqc_identity.respond_to_challenge_hybrid(
         challenge, bob_keys.private_armor, PASS_B, hybrid_keypair=bob_hybrid
     )
-    resp.challenge_hex = resp.challenge_hex[:-2] + ("00" if resp.challenge_hex[-2:] != "00" else "11")
+    resp.challenge_hex = resp.challenge_hex[:-2] + (
+        "00" if resp.challenge_hex[-2:] != "00" else "11"
+    )
     with pytest.raises(VerificationError):
         pqc_identity.verify_challenge_hybrid(challenge, resp, bob_keys.public_armor)
 
@@ -84,11 +82,10 @@ def test_hybrid_forged_pq_leg_rejected(alice_keys, bob_keys, bob_hybrid):
         challenge, bob_keys.private_armor, PASS_B, hybrid_keypair=bob_hybrid
     )
     import base64
+
     other = pqsig.generate_keypair()
     resp.hybrid_mldsa_pub = base64.b64encode(other.mldsa_pub).decode("ascii")
-    assert pqc_identity.verify_challenge_hybrid(
-        challenge, resp, bob_keys.public_armor
-    ) is False
+    assert pqc_identity.verify_challenge_hybrid(challenge, resp, bob_keys.public_armor) is False
 
 
 def test_classical_response_still_accepted_either_or(alice_keys, bob_keys):
@@ -96,9 +93,7 @@ def test_classical_response_still_accepted_either_or(alice_keys, bob_keys):
     challenge = create_challenge(alice_keys.fingerprint, bob_keys.fingerprint)
     resp = respond_to_challenge(challenge, bob_keys.private_armor, PASS_B)
     assert resp.is_hybrid is False
-    assert pqc_identity.verify_challenge_hybrid(
-        challenge, resp, bob_keys.public_armor
-    ) is True
+    assert pqc_identity.verify_challenge_hybrid(challenge, resp, bob_keys.public_armor) is True
 
 
 def test_require_hybrid_rejects_classical(alice_keys, bob_keys):

@@ -65,9 +65,7 @@ def oidc_app(monkeypatch, signing_key, client_registry):
     monkeypatch.setenv("CAPAUTH_OIDC_ISSUER", ISSUER)
 
     store = AuthCodeStore()
-    router = build_oidc_router(
-        signing_key=signing_key, clients=client_registry, store=store
-    )
+    router = build_oidc_router(signing_key=signing_key, clients=client_registry, store=store)
 
     # Mock the PGP verify path. provider._verify_pgp lazily imports these symbols
     # from their source modules, so patching them there is sufficient — no real
@@ -80,16 +78,20 @@ def oidc_app(monkeypatch, signing_key, client_registry):
         stage_mod,
         "verify_auth_response",
         lambda **kw: (
-            (True, "", {
-                "sub": kw["fingerprint"],
-                "capauth_fingerprint": kw["fingerprint"],
-                "amr": ["pgp"],
-                "name": "Test Sovereign",
-                "preferred_username": "Test Sovereign",
-                "email": "sovereign@capauth.test",
-                "email_verified": False,
-                "groups": ["sovereign", "admins"],
-            })
+            (
+                True,
+                "",
+                {
+                    "sub": kw["fingerprint"],
+                    "capauth_fingerprint": kw["fingerprint"],
+                    "amr": ["pgp"],
+                    "name": "Test Sovereign",
+                    "preferred_username": "Test Sovereign",
+                    "email": "sovereign@capauth.test",
+                    "email_verified": False,
+                    "groups": ["sovereign", "admins"],
+                },
+            )
             if kw["nonce_signature_armor"] == "GOOD-SIG"
             else (False, "invalid_nonce_signature", {})
         ),
@@ -203,9 +205,9 @@ def test_signing_key_persists_kid(tmp_path):
 
 def test_verify_pkce_s256():
     verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-    challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode()).digest()
-    ).rstrip(b"=").decode()
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    )
     assert verify_pkce(verifier, challenge, "S256") is True
     assert verify_pkce("wrong", challenge, "S256") is False
 
@@ -289,9 +291,9 @@ def test_full_authorization_code_pkce_flow(oidc_app, signing_key):
     client, router = oidc_app
 
     verifier = "verifier-string-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode()).digest()
-    ).rstrip(b"=").decode()
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    )
 
     rid = _start_login(client, router, challenge=challenge, method="S256", nonce="nonce-xyz")
 
@@ -359,13 +361,18 @@ def test_full_authorization_code_pkce_flow(oidc_app, signing_key):
 def test_token_rejects_bad_pkce(oidc_app):
     client, router = oidc_app
     verifier = "verifier-string-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode()).digest()
-    ).rstrip(b"=").decode()
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    )
     rid = _start_login(client, router, challenge=challenge)
     code = client.post(
         "/oidc/complete",
-        json={"request_id": rid, "fingerprint": TEST_FP, "nonce": "x", "nonce_signature": "GOOD-SIG"},
+        json={
+            "request_id": rid,
+            "fingerprint": TEST_FP,
+            "nonce": "x",
+            "nonce_signature": "GOOD-SIG",
+        },
     ).json()["code"]
 
     resp = client.post(
@@ -387,7 +394,12 @@ def test_token_rejects_bad_client_secret(oidc_app):
     rid = _start_login(client, router)
     code = client.post(
         "/oidc/complete",
-        json={"request_id": rid, "fingerprint": TEST_FP, "nonce": "x", "nonce_signature": "GOOD-SIG"},
+        json={
+            "request_id": rid,
+            "fingerprint": TEST_FP,
+            "nonce": "x",
+            "nonce_signature": "GOOD-SIG",
+        },
     ).json()["code"]
     resp = client.post(
         "/oidc/token",
@@ -406,7 +418,12 @@ def test_code_is_single_use(oidc_app):
     rid = _start_login(client, router)
     code = client.post(
         "/oidc/complete",
-        json={"request_id": rid, "fingerprint": TEST_FP, "nonce": "x", "nonce_signature": "GOOD-SIG"},
+        json={
+            "request_id": rid,
+            "fingerprint": TEST_FP,
+            "nonce": "x",
+            "nonce_signature": "GOOD-SIG",
+        },
     ).json()["code"]
     form = {
         "grant_type": "authorization_code",
@@ -433,7 +450,12 @@ def test_complete_rejects_unknown_request(oidc_app):
     client, _ = oidc_app
     resp = client.post(
         "/oidc/complete",
-        json={"request_id": "nope", "fingerprint": TEST_FP, "nonce": "x", "nonce_signature": "GOOD-SIG"},
+        json={
+            "request_id": "nope",
+            "fingerprint": TEST_FP,
+            "nonce": "x",
+            "nonce_signature": "GOOD-SIG",
+        },
     )
     assert resp.status_code == 400
 

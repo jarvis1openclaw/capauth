@@ -35,7 +35,6 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from .crypto import get_backend
 from .exceptions import VerificationError
 from .identity import respond_to_challenge, verify_challenge
 from .models import (
@@ -48,7 +47,7 @@ HYBRID_SIG_SUITE = "mldsa65-ed25519-v2"
 CLASSICAL_SIG_SUITE = "ed25519-v1"
 
 
-class HybridSigUnavailable(RuntimeError):
+class HybridSigUnavailable(RuntimeError):  # noqa: N818 - public name, renaming breaks callers
     """Raised when the hybrid-signature primitive (skcomms.pqsig) is missing."""
 
 
@@ -126,18 +125,12 @@ def respond_to_challenge_hybrid(
 
     # Hybrid leg over the SAME bytes.
     data = challenge.challenge_hex.encode("utf-8")
-    composite = pqsig.hybrid_sign(
-        data, hybrid_keypair.ed25519_priv, hybrid_keypair.mldsa_priv
-    )
+    composite = pqsig.hybrid_sign(data, hybrid_keypair.ed25519_priv, hybrid_keypair.mldsa_priv)
 
     classical.sig_suite = HYBRID_SIG_SUITE
     classical.hybrid_signature = base64.b64encode(composite).decode("ascii")
-    classical.hybrid_ed25519_pub = base64.b64encode(
-        hybrid_keypair.ed25519_pub
-    ).decode("ascii")
-    classical.hybrid_mldsa_pub = base64.b64encode(
-        hybrid_keypair.mldsa_pub
-    ).decode("ascii")
+    classical.hybrid_ed25519_pub = base64.b64encode(hybrid_keypair.ed25519_pub).decode("ascii")
+    classical.hybrid_mldsa_pub = base64.b64encode(hybrid_keypair.mldsa_pub).decode("ascii")
     return classical
 
 
@@ -180,15 +173,12 @@ def verify_challenge_hybrid(
     """
     if require_hybrid and not response.is_hybrid:
         raise VerificationError(
-            "hybrid signature required but response is classical-only "
-            "(possible downgrade)"
+            "hybrid signature required but response is classical-only (possible downgrade)"
         )
 
     if not response.is_hybrid:
         # Classical-only path — unchanged.
-        return verify_challenge(
-            challenge, response, public_key_armor, backend_type=backend_type
-        )
+        return verify_challenge(challenge, response, public_key_armor, backend_type=backend_type)
 
     # Hybrid path. Reuse the classical structural checks (challenge id/hex/
     # fingerprint) by delegating the classical PGP verification first; this also

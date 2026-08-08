@@ -126,11 +126,7 @@ def test_no_real_env_secret_file_is_tracked():
         capture_output=True,
         text=True,
     ).stdout.splitlines()
-    offenders = [
-        p
-        for p in tracked
-        if Path(p).name == ".env" or p.endswith("/.env")
-    ]
+    offenders = [p for p in tracked if Path(p).name == ".env" or p.endswith("/.env")]
     assert not offenders, f"secret .env files are tracked: {offenders}"
 
 

@@ -153,15 +153,13 @@ def _offer_sync(
         base_dir: CapAuth home directory override.
         enable_sync: True/False from --sync/--no-sync, or None to prompt.
     """
-    from .sync import is_syncthing_available, is_sync_configured, setup_syncthing_sync
+    from .sync import is_sync_configured, is_syncthing_available, setup_syncthing_sync
 
     if not is_syncthing_available():
         return
 
     if is_sync_configured():
-        console.print(
-            "  [green]✓[/] Syncthing sync already configured for identity"
-        )
+        console.print("  [green]✓[/] Syncthing sync already configured for identity")
         return
 
     if enable_sync is None:
@@ -188,9 +186,7 @@ def _offer_sync(
             "  [green]✓[/] Syncthing sync enabled — identity will replicate to all mesh nodes"
         )
     else:
-        console.print(
-            "  [yellow]⚠[/] Could not configure Syncthing sync — set up manually"
-        )
+        console.print("  [yellow]⚠[/] Could not configure Syncthing sync — set up manually")
 
 
 @main.command("sync")
@@ -207,10 +203,10 @@ def sync_cmd(ctx: click.Context, enable: bool) -> None:
     host in the cluster uses the same PGP keypair.
     """
     from .sync import (
+        get_known_devices,
         is_sync_configured,
         is_syncthing_available,
         setup_syncthing_sync,
-        get_known_devices,
     )
 
     if not is_syncthing_available():
@@ -296,19 +292,27 @@ def manifest() -> None:
 @manifest.command("sign")
 @click.argument("manifest_path", type=click.Path(exists=True, dir_okay=False))
 @click.option(
-    "--output", "-o", type=click.Path(), default=None,
+    "--output",
+    "-o",
+    type=click.Path(),
+    default=None,
     help="Signature output path (default: <manifest>.sig).",
 )
 @click.option(
-    "--signer", "-s", default=None,
+    "--signer",
+    "-s",
+    default=None,
     help="Signer key fingerprint/uid (default: operator identity).",
 )
 @click.option(
-    "--passphrase", "-p", default="",
+    "--passphrase",
+    "-p",
+    default="",
     help="Passphrase for the signer key (default: empty; supply for a protected key).",
 )
 @click.option(
-    "--require-canonical/--allow-noncanonical", default=True,
+    "--require-canonical/--allow-noncanonical",
+    default=True,
     help="Refuse to sign a manifest whose bytes are not canonical sorted-key JSON.",
 )
 @click.pass_context
@@ -353,16 +357,23 @@ def manifest_sign(
 @manifest.command("verify")
 @click.argument("manifest_path", type=click.Path(exists=True, dir_okay=False))
 @click.option(
-    "--signature", "--sig", "sig_path",
-    type=click.Path(dir_okay=False), default=None,
+    "--signature",
+    "--sig",
+    "sig_path",
+    type=click.Path(dir_okay=False),
+    default=None,
     help="Detached signature file (default: <manifest>.sig).",
 )
 @click.option(
-    "--expected-signer", "-e", default=None,
+    "--expected-signer",
+    "-e",
+    default=None,
     help="Require this signer fingerprint/uid (default: operator identity).",
 )
 @click.option(
-    "--any-signer", is_flag=True, default=False,
+    "--any-signer",
+    is_flag=True,
+    default=False,
     help="Accept any valid signer (skip operator-identity pinning).",
 )
 @click.pass_context
@@ -422,12 +433,17 @@ _SIG_VERDICT_STYLE = {
 @manifest.command("register")
 @click.argument("manifest_path", type=click.Path(exists=True, dir_okay=False))
 @click.option(
-    "--signature", "--sig", "sig_path",
-    type=click.Path(dir_okay=False), default=None,
+    "--signature",
+    "--sig",
+    "sig_path",
+    type=click.Path(dir_okay=False),
+    default=None,
     help="Detached signature path to record (default: <manifest>.sig).",
 )
 @click.option(
-    "--disabled", is_flag=True, default=False,
+    "--disabled",
+    is_flag=True,
+    default=False,
     help="Register the module but leave it disabled (shell will not mount it).",
 )
 @click.pass_context
@@ -451,14 +467,15 @@ def manifest_register(
 
     state = "enabled" if entry["enabled"] else "disabled"
     console.print(
-        f"[green]Registered[/] module [bold]{entry['id']}[/] ({state}) "
-        f"in {registry_path(home)}"
+        f"[green]Registered[/] module [bold]{entry['id']}[/] ({state}) in {registry_path(home)}"
     )
 
 
 @manifest.command("list")
 @click.option(
-    "--expected-signer", "-e", default=None,
+    "--expected-signer",
+    "-e",
+    default=None,
     help="Pin every entry's signer to this fingerprint/uid (default: any valid key).",
 )
 @click.pass_context
@@ -493,7 +510,9 @@ def manifest_list(ctx: click.Context, expected_signer: Optional[str]) -> None:
 
 @manifest.command("verify-all")
 @click.option(
-    "--expected-signer", "-e", default=None,
+    "--expected-signer",
+    "-e",
+    default=None,
     help="Pin every entry's signer to this fingerprint/uid (default: any valid key).",
 )
 @click.pass_context
@@ -1722,10 +1741,13 @@ def token_mint_audience(
 
 
 @main.command("pqc-report")
-@click.option("--format", "output_format", default="text",
-              type=click.Choice(["text", "json"]))
-@click.option("--static", is_flag=True, default=False,
-              help="Show the model-DEFAULT posture instead of the live fleet.")
+@click.option("--format", "output_format", default="text", type=click.Choice(["text", "json"]))
+@click.option(
+    "--static",
+    is_flag=True,
+    default=False,
+    help="Show the model-DEFAULT posture instead of the live fleet.",
+)
 def pqc_report_cmd(output_format: str, static: bool) -> None:
     """Show capauth's OWN PQC (quantum-resistance) posture.
 
@@ -1736,9 +1758,11 @@ def pqc_report_cmd(output_format: str, static: bool) -> None:
     global / end-to-end / "quantum-proof" claim.
     """
     import json as _json
+
     try:
         from sksecurity.pqc_report import (
-            build_project_report, format_project_report,
+            build_project_report,
+            format_project_report,
         )
     except Exception:
         console.print(
@@ -1770,14 +1794,21 @@ def doctor(ctx: click.Context) -> None:
 
 
 @doctor.command("custody")
-@click.option("--json", "json_out", is_flag=True, default=False,
-              help="Emit the report as JSON for automation.")
-@click.option("--max-backup-age-days", type=int, default=None,
-              help="Freshness window for the backup check (default 14).")
+@click.option(
+    "--json",
+    "json_out",
+    is_flag=True,
+    default=False,
+    help="Emit the report as JSON for automation.",
+)
+@click.option(
+    "--max-backup-age-days",
+    type=int,
+    default=None,
+    help="Freshness window for the backup check (default 14).",
+)
 @click.pass_context
-def doctor_custody(
-    ctx: click.Context, json_out: bool, max_backup_age_days: Optional[int]
-) -> None:
+def doctor_custody(ctx: click.Context, json_out: bool, max_backup_age_days: Optional[int]) -> None:
     """Verify key-custody preconditions (exits nonzero on any FAIL).
 
     Checks that identity material is present, the private key is not
@@ -1789,8 +1820,8 @@ def doctor_custody(
     import json as _json
 
     from .custody import (
-        CustodyPaths,
         DEFAULT_MAX_BACKUP_AGE_DAYS,
+        CustodyPaths,
         exit_code,
         format_report,
         report_to_dict,
@@ -1801,9 +1832,7 @@ def doctor_custody(
     results = run_custody_checks(
         paths=paths,
         max_backup_age_days=(
-            max_backup_age_days
-            if max_backup_age_days is not None
-            else DEFAULT_MAX_BACKUP_AGE_DAYS
+            max_backup_age_days if max_backup_age_days is not None else DEFAULT_MAX_BACKUP_AGE_DAYS
         ),
     )
     if json_out:

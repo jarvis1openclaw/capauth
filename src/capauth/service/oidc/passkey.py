@@ -22,7 +22,7 @@ import secrets
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 from webauthn import (
@@ -163,10 +163,14 @@ class PasskeyStore:
         discoverable (resident-key) login where the authenticator picks.
         """
         _origin, rp_id = rp_origin_and_id()
-        allow = [
-            PublicKeyCredentialDescriptor(id=base64url_to_bytes(cid))
-            for cid in self.credentials_for(fingerprint_hint)
-        ] if fingerprint_hint else []
+        allow = (
+            [
+                PublicKeyCredentialDescriptor(id=base64url_to_bytes(cid))
+                for cid in self.credentials_for(fingerprint_hint)
+            ]
+            if fingerprint_hint
+            else []
+        )
         opts = generate_authentication_options(
             rp_id=rp_id,
             allow_credentials=allow or None,

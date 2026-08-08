@@ -431,9 +431,7 @@ def save_registry(doc: dict[str, Any], home: Path | str | None = None) -> Path:
     """
     path = registry_path(home)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
 
 
@@ -447,14 +445,10 @@ def _manifest_id(manifest_path: Path) -> str:
     try:
         obj = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise ManifestRegistryError(
-            f"cannot read manifest {manifest_path}: {exc}"
-        ) from exc
+        raise ManifestRegistryError(f"cannot read manifest {manifest_path}: {exc}") from exc
     mid = obj.get("id") if isinstance(obj, dict) else None
     if not isinstance(mid, str) or not mid.strip():
-        raise ManifestRegistryError(
-            f"manifest {manifest_path} has no non-empty string 'id' field"
-        )
+        raise ManifestRegistryError(f"manifest {manifest_path} has no non-empty string 'id' field")
     return mid.strip()
 
 
@@ -496,9 +490,7 @@ def register_manifest(
 
     if sig_path is not None:
         stored_sig = (
-            str(sig_path)
-            if _is_url(str(sig_path))
-            else str(Path(sig_path).expanduser().resolve())
+            str(sig_path) if _is_url(str(sig_path)) else str(Path(sig_path).expanduser().resolve())
         )
     else:
         stored_sig = stored_manifest + DEFAULT_SIG_SUFFIX
@@ -579,9 +571,7 @@ def _is_url(value: str) -> bool:
     return value.startswith("http://") or value.startswith("https://")
 
 
-def _verify_entry_signature(
-    entry: dict[str, Any], *, expected_signer: str | None
-) -> str:
+def _verify_entry_signature(entry: dict[str, Any], *, expected_signer: str | None) -> str:
     """Return the live signature verdict for one registry entry. Never raises.
 
     Verdicts:
@@ -646,9 +636,7 @@ def list_registered(
     for entry in doc["modules"]:
         out = dict(entry)
         out["enabled"] = bool(entry.get("enabled", True))
-        out["signature"] = _verify_entry_signature(
-            entry, expected_signer=expected_signer
-        )
+        out["signature"] = _verify_entry_signature(entry, expected_signer=expected_signer)
         annotated.append(out)
     return annotated
 

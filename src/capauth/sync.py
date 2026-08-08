@@ -114,10 +114,12 @@ def get_known_devices() -> list[dict]:
         tree = ET.parse(config_path)
         devices = []
         for dev in tree.getroot().findall("device"):
-            devices.append({
-                "id": dev.get("id", ""),
-                "name": dev.get("name", ""),
-            })
+            devices.append(
+                {
+                    "id": dev.get("id", ""),
+                    "name": dev.get("name", ""),
+                }
+            )
         return devices
     except (ET.ParseError, OSError):
         return []
@@ -180,8 +182,7 @@ def _setup_via_api(
         device_ids = [d["deviceID"] for d in devices]
 
     device_list = [
-        {"deviceID": did, "introducedBy": "", "encryptionPassword": ""}
-        for did in device_ids
+        {"deviceID": did, "introducedBy": "", "encryptionPassword": ""} for did in device_ids
     ]
 
     folder = {

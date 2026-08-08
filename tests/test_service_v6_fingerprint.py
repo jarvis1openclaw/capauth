@@ -48,17 +48,17 @@ def test_v6_fingerprint_not_rejected_by_length_gate() -> None:
     DIFFERENT reason — never the invalid_fingerprint length rejection).
     """
     resp = _challenge(FP_V6)
-    assert not _is_length_gate_rejection(
-        resp
-    ), f"64-hex fingerprint was rejected by the length gate: {resp.status_code} {resp.text}"
+    assert not _is_length_gate_rejection(resp), (
+        f"64-hex fingerprint was rejected by the length gate: {resp.status_code} {resp.text}"
+    )
 
 
 def test_v4_fingerprint_still_accepted() -> None:
     """A 40-hex (v4) fingerprint must still pass the length gate (additive)."""
     resp = _challenge(FP_V4)
-    assert not _is_length_gate_rejection(
-        resp
-    ), f"40-hex fingerprint regressed at the length gate: {resp.status_code} {resp.text}"
+    assert not _is_length_gate_rejection(resp), (
+        f"40-hex fingerprint regressed at the length gate: {resp.status_code} {resp.text}"
+    )
     # The happy path issues a challenge nonce.
     assert resp.status_code == 200, resp.text
     assert resp.json().get("nonce")
@@ -74,14 +74,14 @@ def test_v6_fingerprint_issues_challenge() -> None:
 def test_invalid_length_still_rejected() -> None:
     """A non-40/64 length must still be rejected by the length gate (not widened)."""
     resp = _challenge(FP_BAD)
-    assert _is_length_gate_rejection(
-        resp
-    ), f"50-hex fingerprint should be rejected by the length gate: {resp.status_code} {resp.text}"
+    assert _is_length_gate_rejection(resp), (
+        f"50-hex fingerprint should be rejected by the length gate: {resp.status_code} {resp.text}"
+    )
 
 
 def test_empty_fingerprint_rejected() -> None:
     """An empty fingerprint must still be rejected by the length gate."""
     resp = _challenge("")
-    assert _is_length_gate_rejection(
-        resp
-    ), f"empty fingerprint should be rejected: {resp.status_code} {resp.text}"
+    assert _is_length_gate_rejection(resp), (
+        f"empty fingerprint should be rejected: {resp.status_code} {resp.text}"
+    )

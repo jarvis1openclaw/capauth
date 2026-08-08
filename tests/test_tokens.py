@@ -234,9 +234,7 @@ class TestTokenRevocation:
         )
         # Give it a passing signature (isolate the revocation gate from PGP).
         token.signature = "-----BEGIN PGP SIGNATURE-----\nstub\n-----END PGP SIGNATURE-----"
-        monkeypatch.setattr(
-            "capauth.tokens._pgp_verify_signature", lambda p, s, h=None: True
-        )
+        monkeypatch.setattr("capauth.tokens._pgp_verify_signature", lambda p, s, h=None: True)
         # Not revoked yet -> passes.
         assert verify_token(token, agent_home) is True
         # Revoke it -> now rejected even though signature + time window are fine.
@@ -253,9 +251,7 @@ class TestTokenRevocation:
             sign=False,
         )
         token.signature = "-----BEGIN PGP SIGNATURE-----\nstub\n-----END PGP SIGNATURE-----"
-        monkeypatch.setattr(
-            "capauth.tokens._pgp_verify_signature", lambda p, s, h=None: True
-        )
+        monkeypatch.setattr("capauth.tokens._pgp_verify_signature", lambda p, s, h=None: True)
         assert is_revoked(agent_home, token.payload.token_id) is False
         assert verify_token(token, agent_home) is True
 
@@ -272,9 +268,7 @@ class TestTokenRevocation:
             sign=False,
         )
         token.signature = "-----BEGIN PGP SIGNATURE-----\nstub\n-----END PGP SIGNATURE-----"
-        monkeypatch.setattr(
-            "capauth.tokens._pgp_verify_signature", lambda p, s, h=None: True
-        )
+        monkeypatch.setattr("capauth.tokens._pgp_verify_signature", lambda p, s, h=None: True)
         assert verify_audience_token(token, "skchat", home=agent_home) is True
         revoke_token(agent_home, token.payload.token_id)
         assert verify_audience_token(token, "skchat", home=agent_home) is False

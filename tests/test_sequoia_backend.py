@@ -152,8 +152,14 @@ def test_add_pqc_subkeys_is_additive_and_back_compatible(
     assert backend.verify(data, sig, augmented.public_armor) is True
 
 
-def test_factory_returns_sequoia_backend() -> None:
-    """get_backend(SEQUOIA) returns a SequoiaBackend instance."""
+def test_factory_returns_sequoia_backend(backend: SequoiaBackend) -> None:
+    """get_backend(SEQUOIA) returns a SequoiaBackend instance.
+
+    Takes the module `backend` fixture purely for its skip guard: this file's
+    whole premise is "requires sq, skipped otherwise", but this one test bypassed
+    the fixture and so hard-failed on any host without sq (which is every CI
+    runner) with a BackendError instead of skipping.
+    """
     from capauth.crypto import get_backend
     from capauth.models import CryptoBackendType
 

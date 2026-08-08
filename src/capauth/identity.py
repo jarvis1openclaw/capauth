@@ -242,15 +242,12 @@ def verify_challenge(
 
     if verified and replay_guard is not None:
         retention = (
-            max_age_seconds
-            if max_age_seconds is not None
-            else DEFAULT_MAX_CHALLENGE_AGE_SECONDS
+            max_age_seconds if max_age_seconds is not None else DEFAULT_MAX_CHALLENGE_AGE_SECONDS
         )
         expires_at = created + timedelta(seconds=retention)
         if not replay_guard(challenge.challenge_id, expires_at):
             raise ChallengeReplayError(
-                f"Challenge {challenge.challenge_id} was already used: "
-                "replay detected"
+                f"Challenge {challenge.challenge_id} was already used: replay detected"
             )
 
     return verified
