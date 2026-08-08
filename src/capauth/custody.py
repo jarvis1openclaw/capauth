@@ -36,7 +36,7 @@ import shutil
 import sqlite3
 import stat
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -143,16 +143,8 @@ class CustodyPaths:
                 if rev_cert
                 else identity_dir / REVOCATION_CERT_FILENAME
             ),
-            keystore=(
-                Path(keystore).expanduser()
-                if keystore
-                else base / "service" / "keys.db"
-            ),
-            backup_root=(
-                Path(backup_dir).expanduser()
-                if backup_dir
-                else base / "backups"
-            ),
+            keystore=(Path(keystore).expanduser() if keystore else base / "service" / "keys.db"),
+            backup_root=(Path(backup_dir).expanduser() if backup_dir else base / "backups"),
             nextcloud_key=(
                 Path(nc_key).expanduser()
                 if nc_key
@@ -427,11 +419,7 @@ def _newest_backup_dir(backup_root: Path) -> Optional[Path]:
     """Return the most recently modified ``capauth-backup-*`` dir, or None."""
     if not backup_root.exists():
         return None
-    candidates = [
-        p
-        for p in backup_root.glob("capauth-backup-*")
-        if p.is_dir()
-    ]
+    candidates = [p for p in backup_root.glob("capauth-backup-*") if p.is_dir()]
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
@@ -459,10 +447,8 @@ def check_backups_configured(
         return CheckResult(
             "backups_configured",
             Status.WARN,
-            f"newest backup {newest.name} is {age_days:.1f} days old "
-            f"(> {max_age_days}d window)",
-            "run scripts/capauth-backup.sh or check the capauth-backup.timer; "
-            "backups are stale.",
+            f"newest backup {newest.name} is {age_days:.1f} days old (> {max_age_days}d window)",
+            "run scripts/capauth-backup.sh or check the capauth-backup.timer; backups are stale.",
         )
     return CheckResult(
         "backups_configured",
@@ -565,8 +551,7 @@ def check_nextcloud_signing_key(nextcloud_key: Path) -> CheckResult:
     return CheckResult(
         "nextcloud_signing_key",
         Status.OK,
-        f"Nextcloud signing key present ({nextcloud_key}, {size} bytes, "
-        f"owner-only perms)",
+        f"Nextcloud signing key present ({nextcloud_key}, {size} bytes, owner-only perms)",
     )
 
 
@@ -588,9 +573,7 @@ def run_custody_checks(
     """
     p = paths or CustodyPaths.resolve(home)
     return [
-        check_identity_present(
-            p.private_key, p.public_key, p.profile, p.expected_fingerprint
-        ),
+        check_identity_present(p.private_key, p.public_key, p.profile, p.expected_fingerprint),
         check_private_key_permissions(p.private_key),
         check_key_status(p.public_key),
         check_revocation_cert(p.revocation_cert),

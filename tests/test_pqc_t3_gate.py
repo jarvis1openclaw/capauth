@@ -167,10 +167,7 @@ def test_composite_sign_verify_roundtrip(sq_backend, pqc_key) -> None:
     assert "BEGIN PGP SIGNATURE" in att.signature_armor
 
     # Roundtrip verifies against the public cert.
-    assert (
-        verify_identity_attestation(att, pqc_key.public_armor, backend=sq_backend)
-        is True
-    )
+    assert verify_identity_attestation(att, pqc_key.public_armor, backend=sq_backend) is True
 
 
 def test_tampered_payload_field_fails_verify(sq_backend, pqc_key) -> None:
@@ -190,10 +187,7 @@ def test_tampered_payload_field_fails_verify(sq_backend, pqc_key) -> None:
         suite=att.suite,
         signature_armor=att.signature_armor,
     )
-    assert (
-        verify_identity_attestation(forged, pqc_key.public_armor, backend=sq_backend)
-        is False
-    )
+    assert verify_identity_attestation(forged, pqc_key.public_armor, backend=sq_backend) is False
 
 
 def test_wrong_key_fails_verify(sq_backend, pqc_key) -> None:
@@ -211,10 +205,7 @@ def test_wrong_key_fails_verify(sq_backend, pqc_key) -> None:
         allow_gated=True,
         backend=sq_backend,
     )
-    assert (
-        verify_identity_attestation(att, other.public_armor, backend=sq_backend)
-        is False
-    )
+    assert verify_identity_attestation(att, other.public_armor, backend=sq_backend) is False
 
 
 def test_protected_key_composite_attestation(sq_backend) -> None:
@@ -233,10 +224,7 @@ def test_protected_key_composite_attestation(sq_backend) -> None:
         allow_gated=True,
         backend=sq_backend,
     )
-    assert (
-        verify_identity_attestation(att, protected.public_armor, backend=sq_backend)
-        is True
-    )
+    assert verify_identity_attestation(att, protected.public_armor, backend=sq_backend) is True
 
 
 # ===========================================================================
@@ -264,7 +252,11 @@ class _FakeBackend:
     canonical payload to the backend.
     """
 
-    def __init__(self, sig: str = "-----BEGIN PGP SIGNATURE-----\nFAKE\n-----END PGP SIGNATURE-----", verify_result: bool = True) -> None:
+    def __init__(
+        self,
+        sig: str = "-----BEGIN PGP SIGNATURE-----\nFAKE\n-----END PGP SIGNATURE-----",
+        verify_result: bool = True,
+    ) -> None:
         self.sig = sig
         self.verify_result = verify_result
         self.sign_calls: list[tuple] = []
@@ -292,9 +284,7 @@ def test_gate_open_extra_truthy_and_whitespace(
 
 
 @pytest.mark.parametrize("value", ["enabled", "2", "y", "t", "off", "no", "false", "  ", "open"])
-def test_gate_open_non_truthy_stays_closed(
-    monkeypatch: pytest.MonkeyPatch, value: str
-) -> None:
+def test_gate_open_non_truthy_stays_closed(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     """Values outside the truthy set leave the gate closed (fail-safe default)."""
     monkeypatch.setenv(T3_GATE_ENV, value)
     assert t3_gate_open() is False
@@ -320,14 +310,23 @@ def test_status_reflects_open_gate(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_canonical_payload_is_deterministic() -> None:
     """Same inputs → byte-identical canonical payload (stable for signing)."""
-    a = _canonical_payload(subject="s", statement="hi", issued_at="2026-01-01T00:00:00Z", suite=T3_SIG_SUITE)
-    b = _canonical_payload(subject="s", statement="hi", issued_at="2026-01-01T00:00:00Z", suite=T3_SIG_SUITE)
+    a = _canonical_payload(
+        subject="s", statement="hi", issued_at="2026-01-01T00:00:00Z", suite=T3_SIG_SUITE
+    )
+    b = _canonical_payload(
+        subject="s", statement="hi", issued_at="2026-01-01T00:00:00Z", suite=T3_SIG_SUITE
+    )
     assert a == b
 
 
 def test_canonical_payload_structure_sorted_and_compact() -> None:
     """Payload is compact JSON, sorted keys, exactly the 5 bound fields."""
-    raw = _canonical_payload(subject="capauth:x@skworld.io", statement="sovereign-identity", issued_at="2026-06-24T00:00:00Z", suite=T3_SIG_SUITE)
+    raw = _canonical_payload(
+        subject="capauth:x@skworld.io",
+        statement="sovereign-identity",
+        issued_at="2026-06-24T00:00:00Z",
+        suite=T3_SIG_SUITE,
+    )
     parsed = json.loads(raw)
     assert set(parsed) == {"capauth_t3", "subject", "statement", "issued_at", "suite"}
     assert parsed["capauth_t3"] == T3_PAYLOAD_VERSION
@@ -381,7 +380,15 @@ def test_attestation_to_dict_is_honest_and_complete() -> None:
     assert d["statement"] == att.statement
     assert d["issued_at"] == att.issued_at
     assert d["signature"] == att.signature_armor
-    assert set(d) == {"capauth_t3", "subject", "statement", "issued_at", "suite", "algorithm", "signature"}
+    assert set(d) == {
+        "capauth_t3",
+        "subject",
+        "statement",
+        "issued_at",
+        "suite",
+        "algorithm",
+        "signature",
+    }
 
 
 def test_attestation_is_frozen() -> None:

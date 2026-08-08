@@ -86,7 +86,14 @@ def test_is_present_true_when_skcapstone_available(home):
 
 def test_alert_publishes_to_correct_severity_topic(home):
     """alert() writes a pubsub message at topic capauth.<level>."""
-    assert integration.alert("verify_failed", {"fingerprint": "abcd1234", "error_code": "sig_mismatch"}, level="warn") is True
+    assert (
+        integration.alert(
+            "verify_failed",
+            {"fingerprint": "abcd1234", "error_code": "sig_mismatch"},
+            level="warn",
+        )
+        is True
+    )
     topic_dir = home / "pubsub" / "topics" / "capauth.warn"
     assert topic_dir.is_dir(), f"expected topic dir {topic_dir} to exist"
     msg_files = list(topic_dir.glob("msg-*.json"))

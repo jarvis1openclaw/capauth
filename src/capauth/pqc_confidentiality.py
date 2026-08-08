@@ -55,7 +55,10 @@ def hybrid_prekey_available(agent: Optional[str] = None) -> bool:
     """
     short = _short(agent or _current_agent())
     d = _pqc_dir()
-    for pub in (d / f"{short}_hybrid.pub", d / "lumina_hybrid.pub" if short == "lumina" else d / f"{short}_hybrid.pub"):
+    for pub in (
+        d / f"{short}_hybrid.pub",
+        d / "lumina_hybrid.pub" if short == "lumina" else d / f"{short}_hybrid.pub",
+    ):
         if pub.exists():
             try:
                 if len(bytes.fromhex(pub.read_text().strip())) == 1216:

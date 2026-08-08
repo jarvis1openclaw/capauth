@@ -439,8 +439,11 @@ def test_device_findable_when_peer_file_identity_differs(tmp_path):
         json.dumps({"name": "Lumina", "identity": "lumina@chef.skworld", "fingerprint": "AA"})
     )
     enr = enroll_device(
-        "lumina@chef.skworld.io", ["skchat.send"], mode="verified",
-        subject="lumina@chef.skworld.io", base_dir=base,
+        "lumina@chef.skworld.io",
+        ["skchat.send"],
+        mode="verified",
+        subject="lumina@chef.skworld.io",
+        base_dir=base,
     )
     approve(enr.enrollment_id, "operator", base_dir=base)
     found = list_devices("lumina@chef.skworld.io", base_dir=base)

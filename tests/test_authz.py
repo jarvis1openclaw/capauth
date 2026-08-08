@@ -343,7 +343,10 @@ def test_skgateway_admin_requires_verified(tmp_path):
 
     verified_subject = "dave@chef.skworld"
     _enroll(
-        tmp_path, mode=EnrollmentMode.VERIFIED, subject=verified_subject, scopes=["skgateway.admin"]
+        tmp_path,
+        mode=EnrollmentMode.VERIFIED,
+        subject=verified_subject,
+        scopes=["skgateway.admin"],
     )
     _issue(tmp_path, ["skgateway.admin"], subject=verified_subject)
     allowed = decide(verified_subject, "skgateway.admin", base_dir=tmp_path)

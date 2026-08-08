@@ -291,9 +291,7 @@ class KeyTransparencyLog:
         Raises:
             KeyTransparencyError: If the payload is not JSON-serializable.
         """
-        event_value = (
-            event_type.value if isinstance(event_type, KeyEventType) else str(event_type)
-        )
+        event_value = event_type.value if isinstance(event_type, KeyEventType) else str(event_type)
         payload = payload or {}
         try:
             json.dumps(payload)
@@ -393,10 +391,7 @@ class KeyTransparencyLog:
                     ok=False,
                     entries_checked=checked,
                     broken_seq=entry.seq,
-                    reason=(
-                        f"non-contiguous seq: expected {expected_seq}, "
-                        f"got {entry.seq}"
-                    ),
+                    reason=(f"non-contiguous seq: expected {expected_seq}, got {entry.seq}"),
                 )
             if entry.prev_hash != expected_prev:
                 return ChainVerification(

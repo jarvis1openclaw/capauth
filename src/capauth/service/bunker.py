@@ -210,9 +210,7 @@ class BunkerBroker:
         """Start the background store-writer daemon thread (idempotent)."""
         if self._writer is not None:
             return
-        t = threading.Thread(
-            target=self._writer_loop, name="bunker-store-writer", daemon=True
-        )
+        t = threading.Thread(target=self._writer_loop, name="bunker-store-writer", daemon=True)
         t.start()
         self._writer = t
 
@@ -247,9 +245,7 @@ class BunkerBroker:
         try:
             raw = json.loads(path.read_text())
         except Exception as exc:
-            logger.warning(
-                "bunker: session store unreadable (%s); starting empty", exc
-            )
+            logger.warning("bunker: session store unreadable (%s); starting empty", exc)
             return
         records = raw.get("sessions", []) if isinstance(raw, dict) else raw
         now = time.time()
@@ -345,9 +341,7 @@ class BunkerBroker:
             raise BunkerCapacityError("too many active bunker sessions")
         session_id = secrets.token_urlsafe(12)
         pairing_secret = secrets.token_urlsafe(24)
-        self._sessions[session_id] = _Session(
-            session_id, pairing_secret, ttl_seconds=self._ttl
-        )
+        self._sessions[session_id] = _Session(session_id, pairing_secret, ttl_seconds=self._ttl)
         self._persist()
         logger.info("bunker: session created %s", session_id)
         return {"session_id": session_id, "pairing_secret": pairing_secret}
@@ -474,9 +468,7 @@ class BunkerBroker:
 # kex + enc — the sign_request payload and the signature are unreadable to it.
 # The plaintext sign_* types remain relayable for the legacy / non-E2E path and
 # the test harness.
-_RELAYED_TYPES = frozenset(
-    {"sign_request", "sign_response", "approve", "reject", "kex", "enc"}
-)
+_RELAYED_TYPES = frozenset({"sign_request", "sign_response", "approve", "reject", "kex", "enc"})
 
 
 def build_pairing_uri(
@@ -500,10 +492,7 @@ def build_pairing_uri(
     qs = {"key": pairing_secret}
     if relay_ws_url:
         qs["relay"] = relay_ws_url
-    return (
-        f"capauth-bunker://{broker_host}/{quote(session_id, safe='')}"
-        f"?{urlencode(qs)}"
-    )
+    return f"capauth-bunker://{broker_host}/{quote(session_id, safe='')}?{urlencode(qs)}"
 
 
 def parse_pairing_uri(uri: str) -> dict[str, str]:

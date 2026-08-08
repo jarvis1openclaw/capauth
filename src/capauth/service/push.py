@@ -168,6 +168,8 @@ class PushRegistry:
                     logger.warning("push: send failed (%s): %s", status, exc)
         if dead:
             with self._lock:
-                self._subs[fp] = [s for s in self._subs.get(fp, []) if s.get("endpoint") not in dead]
+                self._subs[fp] = [
+                    s for s in self._subs.get(fp, []) if s.get("endpoint") not in dead
+                ]
                 self._save_subs()
         return {"sent": sent, "pruned": len(dead), "error": None}

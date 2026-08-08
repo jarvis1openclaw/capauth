@@ -55,14 +55,29 @@ def _gen_key(gnupghome, uid: str) -> str:
     env = {"GNUPGHOME": str(gnupghome)}
     subprocess.run(
         [
-            "gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
-            "--quick-generate-key", uid, "default", "sign", "never",
+            "gpg",
+            "--batch",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase",
+            "",
+            "--quick-generate-key",
+            uid,
+            "default",
+            "sign",
+            "never",
         ],
-        env=env, capture_output=True, check=True, timeout=60,
+        env=env,
+        capture_output=True,
+        check=True,
+        timeout=60,
     )
     listing = subprocess.run(
         ["gpg", "--batch", "--with-colons", "--list-secret-keys", uid],
-        env=env, capture_output=True, text=True, check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     for line in listing.stdout.splitlines():
         parts = line.split(":")
@@ -110,9 +125,12 @@ def test_canonical_bytes_matches_skos_reference_form():
     skos_manifest = pytest.importorskip("skos.skworld_manifest")
     expected = skos_manifest.render_manifest_json().encode("utf-8")
     assert canonical_manifest_bytes(skos_manifest.render_manifest_json()) == expected
-    assert canonical_manifest_bytes(skos_manifest.skos_module_manifest(
-        skos_manifest.DEFAULT_BASE_URL
-    )) == expected
+    assert (
+        canonical_manifest_bytes(
+            skos_manifest.skos_module_manifest(skos_manifest.DEFAULT_BASE_URL)
+        )
+        == expected
+    )
 
 
 def test_canonical_bytes_rejects_non_json():

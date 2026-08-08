@@ -85,6 +85,4 @@ def test_pgpy_backend_rejects_pqc_stub():
     pgpy_backend = pytest.importorskip("capauth.crypto.pgpy_backend")
     backend = pgpy_backend.PGPyBackend()
     with pytest.raises(NotImplementedError):
-        backend.generate_keypair(
-            "x", "x@y.z", "pw", algorithm=Algorithm.ML_DSA_65
-        )
+        backend.generate_keypair("x", "x@y.z", "pw", algorithm=Algorithm.ML_DSA_65)

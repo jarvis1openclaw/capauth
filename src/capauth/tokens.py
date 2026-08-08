@@ -402,8 +402,7 @@ def mint_agent_audience_token(
         default = AUDIENCE_SCOPES.get(audience)
         if default is None:
             raise ValueError(
-                f"no default scopes for audience {audience!r}; "
-                "pass an explicit scopes list"
+                f"no default scopes for audience {audience!r}; pass an explicit scopes list"
             )
         granted = list(default)
 

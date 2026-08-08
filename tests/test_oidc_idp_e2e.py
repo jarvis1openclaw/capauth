@@ -87,9 +87,7 @@ def test_full_oidc_flow_with_real_pgp(e2e_client):
     # 1. PKCE pair
     verifier = "pkce-verifier-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     challenge = (
-        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
-        .rstrip(b"=")
-        .decode()
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     )
 
     # 2. /oidc/authorize -> request_id

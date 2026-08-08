@@ -34,7 +34,7 @@ from urllib.parse import urlencode
 
 import jwt as pyjwt
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 
 from ...authentik.claims_mapper import preferred_username_fallback
 from .clients import ClientRegistry
@@ -902,7 +902,7 @@ def build_oidc_router(
     async def passkey_enroll() -> Any:
         return HTMLResponse(content=_ENROLL_PAGE.format(base_url=issuer_url()))
 
-    _JS_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+    _JS_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}  # noqa: N806
 
     @router.get("/passkey.js", summary="Passkey (WebAuthn) browser helpers")
     async def passkey_js() -> Any:

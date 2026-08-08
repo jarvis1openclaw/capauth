@@ -545,7 +545,9 @@ class AuthzDecideRequest(BaseModel):
     subject: str = Field(description="Already-authenticated subject identity (e.g. an fqid)")
     capability: str = Field(description="Requested capability, e.g. 'skgateway.infer'")
     resource: Optional[dict] = Field(default=None, description="Action target; recorded on audit")
-    context: Optional[dict] = Field(default=None, description="Advisory context; never gates allow")
+    context: Optional[dict] = Field(
+        default=None, description="Advisory context; never gates allow"
+    )
 
 
 @app.post("/v1/authz/decide", response_model=AuthzDecision)
@@ -576,7 +578,9 @@ async def authz_decide_endpoint(req: AuthzDecideRequest, request: Request) -> Au
             base_dir=base_dir,
         )
     except Exception as exc:  # pragma: no cover - defensive; PDP is pure + fail-closed
-        logger.warning("authz decide error for subject=%s capability=%s: %s", subject, capability, exc)
+        logger.warning(
+            "authz decide error for subject=%s capability=%s: %s", subject, capability, exc
+        )
         return AuthzDecision(allow=False, reason=f"pdp error: {exc}", obligations=[])
 
     logger.info(
@@ -1011,7 +1015,8 @@ async def qr_login_page(request: Request) -> HTMLResponse:
     base_url = os.environ.get("CAPAUTH_BASE_URL", f"https://{SERVICE_ID}")
     redirect_to = request.query_params.get("redirect", "")
 
-    return HTMLResponse(content=f"""<!DOCTYPE html>
+    return HTMLResponse(
+        content=f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1226,7 +1231,8 @@ async def qr_login_page(request: Request) -> HTMLResponse:
     initQR();
   </script>
 </body>
-</html>""")
+</html>"""
+    )
 
 
 @app.post("/capauth/v1/qr-verify/{nonce_id}")

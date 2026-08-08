@@ -32,7 +32,9 @@ def _create_input(options: dict) -> dict:
     pk["challenge"] = _u2b(options["challenge"])
     pk["user"] = dict(options["user"], id=_u2b(options["user"]["id"]))
     if options.get("excludeCredentials"):
-        pk["excludeCredentials"] = [dict(c, id=_u2b(c["id"])) for c in options["excludeCredentials"]]
+        pk["excludeCredentials"] = [
+            dict(c, id=_u2b(c["id"])) for c in options["excludeCredentials"]
+        ]
     return {"publicKey": pk}
 
 

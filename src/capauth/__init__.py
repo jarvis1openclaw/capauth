@@ -10,6 +10,14 @@ import os
 from pathlib import Path
 
 from .agent_identity import AgentIdentity, resolve_agent_identity
+from .authz import (
+    DEFAULT_RULES,
+    OBLIGATION_AUDIT,
+    CapabilityRule,
+    Decision,
+    Obligation,
+    decide,
+)
 from .manifest import (
     DEFAULT_SIG_SUFFIX,
     ManifestSigningError,
@@ -18,14 +26,6 @@ from .manifest import (
     operator_fingerprint,
     sign_manifest,
     verify_manifest,
-)
-from .authz import (
-    DEFAULT_RULES,
-    OBLIGATION_AUDIT,
-    CapabilityRule,
-    Decision,
-    Obligation,
-    decide,
 )
 from .pairing import (
     DeviceRecord,
@@ -110,6 +110,9 @@ __all__ = [
     "DeviceRecord",
     "PairingWindow",
     "PairingStore",
+    # provisioning (subject enrollment + the skchat scope set)
+    "SKCHAT_SCOPES",
+    "provision_subject",
     # tokens (kernel track M1: moved verbatim from skcapstone)
     "Capability",
     "SignedToken",
@@ -146,7 +149,7 @@ __all__ = [
     "save_calibration",
 ]
 
-__version__ = "0.2.14"
+__version__ = "0.2.15"
 
 SKCAPSTONE_HOME = Path.home() / ".skcapstone"
 DEFAULT_CAPAUTH_DIR = SKCAPSTONE_HOME / "capauth"

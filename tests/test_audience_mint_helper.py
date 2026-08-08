@@ -173,8 +173,17 @@ class TestMintAudienceCLI:
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["--home", str(agent_home), "token", "mint-audience", "--agent", "testagent",
-             "--audience", "skchat", "--no-sign"],
+            [
+                "--home",
+                str(agent_home),
+                "token",
+                "mint-audience",
+                "--agent",
+                "testagent",
+                "--audience",
+                "skchat",
+                "--no-sign",
+            ],
         )
         assert result.exit_code == 0, result.output
         assert "Minted" in result.output
@@ -184,8 +193,18 @@ class TestMintAudienceCLI:
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["--home", str(agent_home), "token", "mint-audience", "--agent", "testagent",
-             "--audience", "skchat", "--no-sign", "--export"],
+            [
+                "--home",
+                str(agent_home),
+                "token",
+                "mint-audience",
+                "--agent",
+                "testagent",
+                "--audience",
+                "skchat",
+                "--no-sign",
+                "--export",
+            ],
         )
         assert result.exit_code == 0, result.output
         # The wire form is the last non-empty output line (plain click.echo).
@@ -202,9 +221,21 @@ class TestMintAudienceCLI:
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["--home", str(agent_home), "token", "mint-audience", "--agent", "testagent",
-             "--audience", "skchat", "--scope", "chat.read", "--scope", "chat.send",
-             "--no-sign"],
+            [
+                "--home",
+                str(agent_home),
+                "token",
+                "mint-audience",
+                "--agent",
+                "testagent",
+                "--audience",
+                "skchat",
+                "--scope",
+                "chat.read",
+                "--scope",
+                "chat.send",
+                "--no-sign",
+            ],
         )
         assert result.exit_code == 0, result.output
         assert "chat.read, chat.send" in result.output

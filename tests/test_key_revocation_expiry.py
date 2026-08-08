@@ -242,17 +242,13 @@ class TestGnuPGBackendKeyStatus:
         """gpg emits REVKEYSIG for a revoked signer; backend raises."""
         backend = self._gpg_backend(tmp_path)
         with pytest.raises(KeyRevokedError):
-            backend.verify(
-                DATA, revoked_key["detached_signature"], revoked_key["public_armor"]
-            )
+            backend.verify(DATA, revoked_key["detached_signature"], revoked_key["public_armor"])
 
     def test_gnupg_rejects_expired_key(self, tmp_path, expired_key):
         """gpg emits EXPKEYSIG for an expired signer; backend raises."""
         backend = self._gpg_backend(tmp_path)
         with pytest.raises(KeyExpiredError):
-            backend.verify(
-                DATA, expired_key["detached_signature"], expired_key["public_armor"]
-            )
+            backend.verify(DATA, expired_key["detached_signature"], expired_key["public_armor"])
 
     def test_gnupg_clean_key_still_verifies(self, tmp_path, revoked_key):
         """Sanity: same signature, pre-revocation pubkey, verifies fine."""

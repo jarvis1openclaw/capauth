@@ -65,25 +65,19 @@ def test_fails_when_admin_token_is_default():
 
 
 def test_fails_when_jwt_secret_is_default():
-    result = run_preflight(
-        {"CAPAUTH_ADMIN_TOKEN": GOOD_SECRET, "CAPAUTH_JWT_SECRET": DEFAULT_JWT}
-    )
+    result = run_preflight({"CAPAUTH_ADMIN_TOKEN": GOOD_SECRET, "CAPAUTH_JWT_SECRET": DEFAULT_JWT})
     assert result.returncode != 0
     assert "CAPAUTH_JWT_SECRET" in result.stderr
 
 
 def test_fails_when_secret_empty():
-    result = run_preflight(
-        {"CAPAUTH_ADMIN_TOKEN": "", "CAPAUTH_JWT_SECRET": GOOD_SECRET}
-    )
+    result = run_preflight({"CAPAUTH_ADMIN_TOKEN": "", "CAPAUTH_JWT_SECRET": GOOD_SECRET})
     assert result.returncode != 0
     assert "CAPAUTH_ADMIN_TOKEN" in result.stderr
 
 
 def test_fails_when_secret_too_short():
-    result = run_preflight(
-        {"CAPAUTH_ADMIN_TOKEN": "short", "CAPAUTH_JWT_SECRET": GOOD_SECRET}
-    )
+    result = run_preflight({"CAPAUTH_ADMIN_TOKEN": "short", "CAPAUTH_JWT_SECRET": GOOD_SECRET})
     assert result.returncode != 0
     assert "CAPAUTH_ADMIN_TOKEN" in result.stderr
 
@@ -93,9 +87,7 @@ def test_fails_when_secret_too_short():
     ["change-me-anything", "changeme", "CHANGE_ME_now", "change_me_token_value_here"],
 )
 def test_fails_on_change_me_variants(value):
-    result = run_preflight(
-        {"CAPAUTH_ADMIN_TOKEN": value, "CAPAUTH_JWT_SECRET": GOOD_SECRET}
-    )
+    result = run_preflight({"CAPAUTH_ADMIN_TOKEN": value, "CAPAUTH_JWT_SECRET": GOOD_SECRET})
     assert result.returncode != 0
     assert "CAPAUTH_ADMIN_TOKEN" in result.stderr
 
