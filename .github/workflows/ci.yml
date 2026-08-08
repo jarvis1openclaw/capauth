@@ -35,7 +35,7 @@ jobs:
         run: |
           pip install --no-deps --no-cache-dir \
             "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
-            "skcoord @ git+https://github.com/smilinTux/skcoord@main"
+            "skcoord @ git+https://github.com/smilinTux/skcoord@master"
       - name: Run tests with coverage
         run: python -m pytest tests/ -v --tb=short --cov=capauth --cov-report=xml --cov-report=term-missing
       - name: Upload coverage
