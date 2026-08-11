@@ -204,6 +204,36 @@ class TestIdentityPresent:
         )
         assert r.status is Status.WARN
 
+    def test_private_key_not_matching_public_key_fails(self, good_paths):
+        """A private key from a DIFFERENT identity must not pass silently.
+
+        Regression: on the chi cluster five nodes carried a public.asc for one
+        identity next to a private.asc belonging to a different (personal) key.
+        Because the check only ever fingerprinted public.asc, doctor reported
+        OK and the missing agent key went unnoticed for months.
+        """
+        stranger = _new_ed25519_key("Stranger", "stranger@example.invalid")
+        good_paths.private_key.write_text(str(stranger), encoding="utf-8")
+        os.chmod(good_paths.private_key, 0o600)
+
+        r = check_identity_present(
+            good_paths.private_key, good_paths.public_key, good_paths.profile
+        )
+        assert r.status is Status.FAIL, f"expected FAIL, got {r.status}: {r.detail}"
+        assert "does not match" in r.detail.lower()
+
+    def test_mismatch_detail_leaks_no_secret_material(self, good_paths):
+        stranger = _new_ed25519_key("Stranger", "stranger@example.invalid")
+        good_paths.private_key.write_text(str(stranger), encoding="utf-8")
+        os.chmod(good_paths.private_key, 0o600)
+
+        r = check_identity_present(
+            good_paths.private_key, good_paths.public_key, good_paths.profile
+        )
+        blob = f"{r.detail} {r.remediation or ''}"
+        assert "PRIVATE KEY BLOCK" not in blob
+        assert PASSPHRASE not in blob
+
 
 # ── private-key permissions ───────────────────────────────────────────────────
 

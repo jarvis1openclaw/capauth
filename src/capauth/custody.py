@@ -190,6 +190,26 @@ def _load_public_fingerprint(public_key_path: Path):
         return None, None
 
 
+def _load_private_fingerprint(private_key_path: Path) -> Optional[str]:
+    """Return the fingerprint of the PRIVATE key, or ``None`` if unreadable.
+
+    Only the fingerprint (public material, derived from the primary key packet)
+    is returned - the key is never unlocked and no secret bytes are surfaced to
+    callers. Returns ``None`` when PGPy is unavailable or the file will not
+    parse, so an unreadable key degrades to "cannot verify" rather than a
+    false failure.
+    """
+    try:
+        import pgpy  # noqa: F401  (import guarded; PGPy is optional on 3.13+)
+    except Exception:
+        return None
+    try:
+        key, _ = pgpy.PGPKey.from_file(str(private_key_path))
+        return str(key.fingerprint).replace(" ", "")
+    except Exception:
+        return None
+
+
 # ── individual checks ─────────────────────────────────────────────────────────
 
 
@@ -230,6 +250,23 @@ def check_identity_present(
     label = f"fingerprint={fpr}" if fpr else "fingerprint=unreadable(PGPy unavailable)"
     if fpr and fpr.upper() == LIVE_ROOT_FINGERPRINT:
         label += " (ROOT identity)"
+
+    # The private key must belong to the SAME identity as public.asc. Checking
+    # only the public key lets a private key from a different identity sit in
+    # the expected place and still report OK - which is how a wholly absent
+    # agent key went unnoticed across a five-node cluster.
+    priv_fpr = _load_private_fingerprint(private_key)
+    if fpr and priv_fpr and priv_fpr.upper() != fpr.upper():
+        return CheckResult(
+            "identity_present",
+            Status.FAIL,
+            f"private key fingerprint {priv_fpr} does not match public.asc {fpr} "
+            f"at {private_key.parent}",
+            "the private and public halves belong to different identities. "
+            "Restore the matching private key from offline custody, or re-run "
+            "'capauth init' if this identity was never generated on this host.",
+        )
+
     if expected_fingerprint and fpr and fpr.upper() != expected_fingerprint.upper():
         return CheckResult(
             "identity_present",
