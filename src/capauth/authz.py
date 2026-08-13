@@ -318,14 +318,81 @@ _AGENTRUN_RULES: tuple[CapabilityRule, ...] = (
     ),
 )
 
+# The change-management capability rules (card fe10c9d8; design doc
+# 2026-08-13-change-management-cab-ai-arch.md section 7). These gate the
+# ITIL change state machine end to end: raising a change, attaching a CI
+# verdict, CAB voting, scheduling the deploy window, and the deploy itself.
+# Tier gradient, same read=tofu/write=attested/act=verified pattern as every
+# other namespace here:
+#
+#   * ``change.propose``  -> ATTESTED. Creates a fleet-change record
+#     (write-class), matching ``skchat.prekey`` / ``agentrun.queue``.
+#   * ``change.validate`` -> ATTESTED. Runs CI and attaches a verdict to the
+#     change (compute-spend/write-class), same tier as ``change.propose``.
+#   * ``change.cab_vote`` -> VERIFIED. Acts as an identity on the one gate
+#     that authorizes fleet mutation; this is the fix for today's
+#     unauthenticated free-text CAB vote agent field (design doc section 7,
+#     "no-self-approval" layer 1). Verified only, matching ``skchat.groups``
+#     / ``skchat.calls`` / ``skcode.dispatch``.
+#   * ``change.schedule`` -> VERIFIED. Decides WHEN the fleet mutates;
+#     act-class, same floor as the CAB vote.
+#   * ``change.deploy``   -> VERIFIED. Merges + deploys: the widest blast
+#     radius in the system. Verified only (and, per the design doc, further
+#     flag-gated + human-arm-gated at the PEP; this PDP row is the identity
+#     floor, not the whole gate).
+_CHANGE_RULES: tuple[CapabilityRule, ...] = (
+    CapabilityRule(
+        capability="change.propose",
+        required_capability="change.propose",
+        minimum_mode=EnrollmentMode.ATTESTED,
+        description="Raise/draft a fleet-change record; write-class.",
+    ),
+    CapabilityRule(
+        capability="change.validate",
+        required_capability="change.validate",
+        minimum_mode=EnrollmentMode.ATTESTED,
+        description="Attach a CI verdict to a change; compute-spend/write-class.",
+    ),
+    CapabilityRule(
+        capability="change.cab_vote",
+        required_capability="change.cab_vote",
+        minimum_mode=EnrollmentMode.VERIFIED,
+        description=(
+            "Cast a CAB vote on a change; acts as an identity on the gate that "
+            "authorizes fleet mutation, verified only (fixes anonymous voting)."
+        ),
+    ),
+    CapabilityRule(
+        capability="change.schedule",
+        required_capability="change.schedule",
+        minimum_mode=EnrollmentMode.VERIFIED,
+        description="Schedule the deploy window (ASAP or a future window); act-class.",
+    ),
+    CapabilityRule(
+        capability="change.deploy",
+        required_capability="change.deploy",
+        minimum_mode=EnrollmentMode.VERIFIED,
+        description=(
+            "Execute the approved + scheduled change for real; the one merge "
+            "authority in the system, verified only and the highest floor."
+        ),
+    ),
+)
+
 #: The default, process-wide capability rule table, keyed by capability name.
 #: The seeded skchat rows plus the skgateway rows (L1.8) plus the skcode RCE rows
-#: (CR-6.2 C3) plus the skdashboard agentrun rows (card 640698fa). Additive:
-#: every prior row is untouched; new subapps append their own ``<subapp>.*``
-#: namespace here.
+#: (CR-6.2 C3) plus the skdashboard agentrun rows (card 640698fa) plus the
+#: change-management rows (card fe10c9d8). Additive: every prior row is
+#: untouched; new subapps append their own ``<subapp>.*`` namespace here.
 DEFAULT_RULES: dict[str, CapabilityRule] = {
     rule.capability: rule
-    for rule in (*_SKCHAT_RULES, *_SKGATEWAY_RULES, *_SKCODE_RULES, *_AGENTRUN_RULES)
+    for rule in (
+        *_SKCHAT_RULES,
+        *_SKGATEWAY_RULES,
+        *_SKCODE_RULES,
+        *_AGENTRUN_RULES,
+        *_CHANGE_RULES,
+    )
 }
 
 
