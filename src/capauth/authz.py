@@ -278,12 +278,54 @@ _SKCODE_RULES: tuple[CapabilityRule, ...] = (
     ),
 )
 
+# The skdashboard fleet-suggestion-engine capability rules (card 640698fa).
+# skdashboard.queue_authz calls this PDP to authorize queuing an AI run against
+# a work item's suggestion. Two capabilities, at the tiers the existing gradient
+# (read=tofu, write=attested, act=verified) already assigns:
+#
+#   * ``agentrun.queue`` -> ATTESTED. Queuing a propose/dry-run run spends
+#     compute AS the subject (an ai-runner job is scheduled on their behalf) but
+#     produces no side effect beyond a proposal for a human to later act on --
+#     the same write/compute-spend tier as ``skgateway.infer`` (proxy inference
+#     AS the subject) and ``skchat.voice`` (run STT/TTS compute on the subject's
+#     behalf).
+#   * ``agentrun.execute`` -> VERIFIED. Queuing an EXECUTE run produces a draft
+#     with real side-effect potential (the run can touch shared state once
+#     applied), an act-class change matching ``skchat.groups`` / ``skchat.calls``
+#     and the ``skcode.dispatch`` / ``skcode.inject`` RCE rows: all four take the
+#     verified floor because they act AS the subject with consequences beyond
+#     the requester alone.
+_AGENTRUN_RULES: tuple[CapabilityRule, ...] = (
+    CapabilityRule(
+        capability="agentrun.queue",
+        required_capability="agentrun.queue",
+        minimum_mode=EnrollmentMode.ATTESTED,
+        description=(
+            "Queue a propose/dry-run AI run on a work item; spends compute AS "
+            "the subject but only proposes, matching skgateway.infer / "
+            "skchat.voice's write/compute-spend tier."
+        ),
+    ),
+    CapabilityRule(
+        capability="agentrun.execute",
+        required_capability="agentrun.execute",
+        minimum_mode=EnrollmentMode.VERIFIED,
+        description=(
+            "Queue an EXECUTE AI run that produces a draft with real "
+            "side-effect potential; act-class, matching skchat.groups / "
+            "skchat.calls and skcode.dispatch / skcode.inject."
+        ),
+    ),
+)
+
 #: The default, process-wide capability rule table, keyed by capability name.
 #: The seeded skchat rows plus the skgateway rows (L1.8) plus the skcode RCE rows
-#: (CR-6.2 C3). Additive: every prior row is untouched; new subapps append their
-#: own ``<subapp>.*`` namespace here.
+#: (CR-6.2 C3) plus the skdashboard agentrun rows (card 640698fa). Additive:
+#: every prior row is untouched; new subapps append their own ``<subapp>.*``
+#: namespace here.
 DEFAULT_RULES: dict[str, CapabilityRule] = {
-    rule.capability: rule for rule in (*_SKCHAT_RULES, *_SKGATEWAY_RULES, *_SKCODE_RULES)
+    rule.capability: rule
+    for rule in (*_SKCHAT_RULES, *_SKGATEWAY_RULES, *_SKCODE_RULES, *_AGENTRUN_RULES)
 }
 
 
