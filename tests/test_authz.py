@@ -35,6 +35,12 @@ from capauth.tokens import issue_token
 SUBJECT = "alice@chef.skworld"
 PUBKEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----"
 
+# ``decide`` requires the granting token to carry a verifying signature, so every
+# test here issues SIGNED tokens against the hermetic gpg stub (see conftest).
+# The stub still refuses unsigned/tampered tokens; the real OpenPGP path is
+# covered in test_authz_signature_gate.py.
+pytestmark = pytest.mark.usefixtures("stub_token_signing")
+
 
 # --------------------------------------------------------------------------- #
 # helpers (all base_dir-injected)
@@ -52,13 +58,13 @@ def _enroll(base: Path, *, mode: EnrollmentMode, subject: str = SUBJECT, scopes=
 
 
 def _issue(base: Path, capabilities, *, subject: str = SUBJECT, ttl_hours=24):
-    """Issue an (unsigned, hermetic) capability token for ``subject``."""
+    """Issue a signed (hermetic, stubbed-gpg) capability token for ``subject``."""
     return issue_token(
         home=base,
         subject=subject,
         capabilities=capabilities,
         ttl_hours=ttl_hours,
-        sign=False,
+        sign=True,
     )
 
 

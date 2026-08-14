@@ -52,8 +52,12 @@ def provision_subject(
             the real key is not to hand).
         ttl_hours: Token lifetime (default 30 days).
         approver: Recorded as the device's approver.
-        sign: PGP-sign the token if a key is available (degrades to unsigned; the
-            PDP checks capability/active/revoked, not the signature).
+        sign: PGP-sign the capability token. Signing failures RAISE
+            (:class:`capauth.tokens.TokenSigningError`) rather than degrading to
+            an unsigned token. Passing ``sign=False`` provisions a subject whose
+            token the PDP will REJECT, since :func:`capauth.authz.decide`
+            requires a verifying signature; it is for tests, not for real
+            provisioning.
         base_dir: Injectable storage root (defaults to ~/.skcapstone).
 
     Returns:

@@ -47,6 +47,7 @@ from .tokens import (
     Capability,
     SignedToken,
     TokenPayload,
+    TokenSigningError,
     TokenType,
     export_token,
     has_scope,
@@ -57,6 +58,7 @@ from .tokens import (
     mint_agent_audience_token,
     mint_audience_token,
     revoke_token,
+    signature_verifies,
     verify_audience_token,
     verify_token,
 )
@@ -121,9 +123,11 @@ __all__ = [
     "export_token",
     "import_token",
     "is_revoked",
+    "TokenSigningError",
     "issue_token",
     "list_tokens",
     "revoke_token",
+    "signature_verifies",
     "verify_token",
     # audience-scoped token minting (audience-mint, M1+/R4.2)
     "AUDIENCE_SCOPES",
