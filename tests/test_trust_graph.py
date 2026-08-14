@@ -71,6 +71,7 @@ class TestBuildGraph:
             tmp_agent_home,
             subject="peer-agent",
             capabilities=["memory:read"],
+            sign=False,
         )
 
         graph = build_trust_graph(tmp_agent_home)
@@ -191,7 +192,7 @@ class TestFormatJson:
     def test_stats_counts(self, tmp_agent_home: Path):
         """Stats section has correct counts."""
         _init_agent(tmp_agent_home)
-        issue_token(tmp_agent_home, subject="svc", capabilities=["*"])
+        issue_token(tmp_agent_home, subject="svc", capabilities=["*"], sign=False)
         graph = build_trust_graph(tmp_agent_home)
         parsed = json.loads(format_json(graph))
 

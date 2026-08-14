@@ -19,12 +19,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from capauth.authz import DEFAULT_RULES, decide
 from capauth.pairing import EnrollmentMode, approve, enroll_device
 from capauth.tokens import issue_token
 
 SUBJECT = "alice@chef.skworld"
 PUBKEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----"
+
+# ``decide`` requires the granting token to carry a verifying signature, so
+# tokens here are issued SIGNED against the hermetic gpg stub (see conftest).
+pytestmark = pytest.mark.usefixtures("stub_token_signing")
 
 
 # --------------------------------------------------------------------------- #
@@ -43,13 +49,13 @@ def _enroll(base: Path, *, mode: EnrollmentMode, subject: str = SUBJECT, scopes=
 
 
 def _issue(base: Path, capabilities, *, subject: str = SUBJECT, ttl_hours=24):
-    """Issue an (unsigned, hermetic) capability token for ``subject``."""
+    """Issue a signed (hermetic, stubbed-gpg) capability token for ``subject``."""
     return issue_token(
         home=base,
         subject=subject,
         capabilities=capabilities,
         ttl_hours=ttl_hours,
-        sign=False,
+        sign=True,
     )
 
 

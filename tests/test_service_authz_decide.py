@@ -33,6 +33,10 @@ PUBKEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BL
 AUTHZ_TOKEN = "test-authz-service-token"
 AUTH_HEADER = {"Authorization": f"Bearer {AUTHZ_TOKEN}"}
 
+# ``decide`` requires the granting token to carry a verifying signature, so
+# tokens here are issued SIGNED against the hermetic gpg stub (see conftest).
+pytestmark = pytest.mark.usefixtures("stub_token_signing")
+
 
 def _enroll(base: Path, *, mode: EnrollmentMode, subject: str = SUBJECT):
     enrollment = enroll_device(
@@ -51,7 +55,7 @@ def _issue(base: Path, capabilities, *, subject: str = SUBJECT, ttl_hours=24):
         subject=subject,
         capabilities=capabilities,
         ttl_hours=ttl_hours,
-        sign=False,
+        sign=True,
     )
 
 

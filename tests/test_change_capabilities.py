@@ -41,6 +41,10 @@ ALL_CHANGE_CAPABILITIES = (
 ATTESTED_CAPABILITIES = ("change.propose", "change.validate")
 VERIFIED_CAPABILITIES = ("change.cab_vote", "change.schedule", "change.deploy")
 
+# ``decide`` requires the granting token to carry a verifying signature, so
+# tokens here are issued SIGNED against the hermetic gpg stub (see conftest).
+pytestmark = pytest.mark.usefixtures("stub_token_signing")
+
 
 # --------------------------------------------------------------------------- #
 # helpers (all base_dir-injected; mirrors tests/test_authz.py)
@@ -64,7 +68,7 @@ def _issue(base: Path, capabilities, *, subject: str = SUBJECT, ttl_hours=24):
         subject=subject,
         capabilities=capabilities,
         ttl_hours=ttl_hours,
-        sign=False,
+        sign=True,
     )
 
 

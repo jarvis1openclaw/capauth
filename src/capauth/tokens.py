@@ -35,8 +35,26 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from .agent_identity import resolve_agent_identity
+from .exceptions import CapAuthError
+from .manifest import verify_manifest
 
 logger = logging.getLogger("capauth.tokens")
+
+
+class TokenSigningError(CapAuthError):
+    """Signing a capability token failed, so no token was issued.
+
+    Raised by :func:`issue_token` / :func:`mint_audience_token` when ``sign=True``
+    but gpg produced no signature (missing binary, no secret key for the issuer
+    fingerprint, locked agent, gpg error). Issuance FAILS instead of degrading to
+    an unsigned token: an unsigned token is rejected by the PDP
+    (:func:`capauth.authz.decide`), so silently storing one produces a grant that
+    looks issued but authorizes nothing, and historically produced a grant that
+    authorized everything. Fail loudly, write nothing.
+
+    Subclasses :class:`~capauth.exceptions.CapAuthError`.
+    """
+
 
 #: Standard default scopes per audience for the ergonomic mint wrapper.
 #:
@@ -203,10 +221,19 @@ def issue_token(
         token_type: Type of token to issue.
         ttl_hours: Hours until expiry (None = no expiry).
         metadata: Additional claims to embed.
-        sign: Whether to PGP-sign the token.
+        sign: Whether to PGP-sign the token. Signing is the default and a
+            signing failure now RAISES (see Raises). ``sign=False`` still stores
+            a deliberately unsigned token, but note that
+            :func:`capauth.authz.decide` rejects unsigned tokens, so such a token
+            authorizes nothing; it exists for tests and for callers that only
+            need the payload record.
 
     Returns:
-        SignedToken with the payload and optional signature.
+        SignedToken with the payload and, when ``sign``, a verified signature.
+
+    Raises:
+        TokenSigningError: If ``sign`` is True and gpg produced no signature.
+            Nothing is written to the token store in that case.
     """
     issuer_fp = _get_issuer_fingerprint(home)
     now = datetime.now(timezone.utc)
@@ -225,12 +252,7 @@ def issue_token(
     payload.token_id = _compute_token_id(payload)
 
     token = SignedToken(payload=payload)
-
-    if sign:
-        signature = _pgp_sign_payload(payload, home)
-        if signature:
-            token.signature = signature
-            token.verified = True
+    _apply_signature(token, home, sign=sign)
 
     _store_token(home, token)
     logger.info("Issued token %s for %s (%s)", payload.token_id[:12], subject, token_type.value)
@@ -284,6 +306,61 @@ def verify_token(token: SignedToken, home: Optional[Path] = None) -> bool:
     return False
 
 
+def signature_verifies(token: SignedToken) -> bool:
+    """Whether ``token`` carries a signature that actually checks out. Fails closed.
+
+    This is the pure SIGNATURE fact, with no time-window or revocation logic, so
+    the PDP (:func:`capauth.authz.decide`) can add it to the facts it already
+    gates on without duplicating them. Returns ``True`` only when ALL hold:
+
+    * the token carries a non-empty detached signature;
+    * the payload names a usable issuer fingerprint (a token whose ``issuer`` is
+      empty or the ``"unknown"`` placeholder is unattributable, so it is refused
+      rather than verified against "whoever happened to sign it");
+    * that signature is a valid OpenPGP signature over EXACTLY the payload's
+      canonical JSON bytes, so any tamper with the capabilities, subject,
+      expiry, or token id flips it False;
+    * the signing key is present in the verifier's gpg keyring and is neither
+      revoked nor expired (those never yield ``VALIDSIG``); and
+    * the signing key's fingerprint matches the ``issuer`` the payload declares,
+      so a token cannot claim one issuer while being signed by another key.
+
+    What this does and does NOT establish
+    -------------------------------------
+    The trust anchor is the verifier's local gpg keyring, which lives at
+    ``~/.gnupg`` and is deliberately OUTSIDE the Syncthing-replicated
+    ``~/.skcapstone`` token store. That is the point of the check: an adversary
+    who can write a file into the replicated store still cannot produce a
+    signature that verifies, because the keyring is not part of what they can
+    write. It does NOT establish that the issuer is AUTHORIZED to grant the
+    capability in question; ``issuer`` is self-declared and pinned only to the
+    key that actually signed. Restricting WHICH issuers may grant what is a
+    separate, fleet-wide policy question (a trusted-issuer allowlist) that this
+    function deliberately does not answer.
+
+    Args:
+        token: The signed token to check.
+
+    Returns:
+        bool: True only if the signature is present, valid over this exact
+        payload, and made by the declared issuer. Never raises.
+    """
+    signature = token.signature
+    if not signature or not signature.strip():
+        return False
+
+    issuer = (token.payload.issuer or "").strip()
+    if not issuer or issuer.lower() == "unknown":
+        return False
+
+    try:
+        payload_bytes = token.payload.model_dump_json().encode()
+    except Exception:  # noqa: BLE001 - an unserializable payload cannot be verified
+        return False
+
+    return verify_manifest(payload_bytes, signature, expected_signer=issuer)
+
+
 def mint_audience_token(
     home: Path,
     subject: str,
@@ -304,8 +381,10 @@ def mint_audience_token(
     declared ``auth.scopes``). Tokens are short-lived by default (1 hour) since
     the shell re-mints; a compromised pane is contained.
 
-    The signing and storage path is delegated to :func:`issue_token`, so there
-    is a single crypto path (no duplicated signing logic).
+    Signing goes through the same :func:`_apply_signature` helper
+    :func:`issue_token` uses, so there is a single crypto path (no duplicated
+    signing logic) and the same fail-closed posture: a signing failure raises
+    and stores nothing.
 
     Args:
         home: Agent home directory (~/.skcapstone).
@@ -314,11 +393,16 @@ def mint_audience_token(
         scopes: The granted scope strings (become ``capabilities``).
         ttl_hours: Hours until expiry (default 1; the shell re-mints).
         metadata: Additional claims to embed.
-        sign: Whether to PGP-sign the token.
+        sign: Whether to PGP-sign the token. See :func:`issue_token` for what
+            ``sign=False`` means for authorization (the PDP rejects it).
 
     Returns:
         A :class:`SignedToken` whose payload has ``audience`` set and
         ``token_type`` = CAPABILITY.
+
+    Raises:
+        TokenSigningError: If ``sign`` is True and gpg produced no signature.
+            Nothing is written to the token store in that case.
     """
     issuer_fp = _get_issuer_fingerprint(home)
     now = datetime.now(timezone.utc)
@@ -338,12 +422,7 @@ def mint_audience_token(
     payload.token_id = _compute_token_id(payload)
 
     token = SignedToken(payload=payload)
-
-    if sign:
-        signature = _pgp_sign_payload(payload, home)
-        if signature:
-            token.signature = signature
-            token.verified = True
+    _apply_signature(token, home, sign=sign)
 
     _store_token(home, token)
     logger.info(
@@ -634,6 +713,42 @@ def _compute_token_id(payload: TokenPayload) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+def _apply_signature(token: SignedToken, home: Path, *, sign: bool) -> None:
+    """Sign ``token`` in place, or raise so the caller stores nothing.
+
+    The single signing path shared by :func:`issue_token` and
+    :func:`mint_audience_token`. Called BEFORE the token is persisted, so a
+    signing failure aborts issuance instead of leaving an unsigned token in the
+    store the way it used to.
+
+    Args:
+        token: The token to sign in place.
+        home: Agent home, used to resolve the issuer key.
+        sign: When False, leave the token unsigned and do not raise (an explicit
+            caller choice; the PDP will refuse the result).
+
+    Raises:
+        TokenSigningError: If ``sign`` is True and gpg produced no signature.
+    """
+    if not sign:
+        return
+
+    signature = _pgp_sign_payload(token.payload, home)
+    if not signature:
+        issuer = token.payload.issuer
+        raise TokenSigningError(
+            f"refusing to issue an unsigned capability token for "
+            f"{token.payload.subject!r}: gpg produced no signature for issuer key "
+            f"{issuer!r}. Nothing was written to the token store. An unsigned token "
+            f"is rejected by capauth.authz.decide, so storing one would create a "
+            f"grant that cannot authorize anything. Check that the secret key for "
+            f"{issuer!r} is present and its agent is unlocked on this node."
+        )
+
+    token.signature = signature
+    token.verified = True
+
+
 def _pgp_sign_payload(payload: TokenPayload, home: Path) -> Optional[str]:
     """PGP-sign a token payload using the agent's CapAuth key."""
     if not shutil.which("gpg"):
@@ -754,8 +869,10 @@ __all__ = [
     "Capability",
     "TokenPayload",
     "SignedToken",
+    "TokenSigningError",
     "issue_token",
     "verify_token",
+    "signature_verifies",
     "AUDIENCE_SCOPES",
     "mint_audience_token",
     "mint_agent_audience_token",

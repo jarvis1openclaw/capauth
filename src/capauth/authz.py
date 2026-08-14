@@ -18,7 +18,7 @@ staging are a deliberate later step in the skchat repo (spec 3.5 parts 2-4).
 
 Determinism from cryptographic facts only
 -----------------------------------------
-The decision is a pure function of three stored, cryptographic facts about the
+The decision is a pure function of four stored, cryptographic facts about the
 subject plus the request:
 
 1. **Enrollment mode** of the subject's device(s), from
@@ -29,7 +29,19 @@ subject plus the request:
    M1-moved :mod:`capauth.tokens` (capability chains included:
    ``Capability.ALL`` -- the ``"*"`` grant -- grants everything), gated by each
    token's ``is_active`` (expiry / not-before) and revocation state.
-3. The **requested capability** and **resource**.
+3. **The token's signature**, via :func:`capauth.tokens.signature_verifies`: a
+   valid OpenPGP signature over the token's exact payload bytes, made by the key
+   the payload names as its issuer. Fact 2 alone is only "a file exists in the
+   store"; the token store is Syncthing-replicated, so without this fact any
+   principal who can write a file into it could mint itself any capability. The
+   trust anchor is the verifier's local gpg keyring (``~/.gnupg``), which is
+   outside the replicated store.
+4. The **requested capability** and **resource**.
+
+This kernel does NOT decide whether an issuer is *authorized* to grant a given
+capability. A token is pinned to the issuer it declares, but any key in the
+local keyring can be an issuer; a trusted-issuer allowlist is a separate,
+fleet-wide policy decision that is deliberately not made here.
 
 Hard rule (spec 4.2): FEB / emotional state NEVER gates the allow decision.
 This module imports nothing from cloud9 and never consults a trust/FEB signal to
@@ -40,8 +52,12 @@ allow/deny branch.
 Fail closed
 -----------
 Every uncertainty denies: an unknown subject (no enrolled device), a missing /
-expired / revoked token, an insufficient enrollment mode, and an unknown
-capability all return ``allow=False`` with a clear ``reason``.
+expired / revoked token, an unsigned token or one whose signature does not
+verify, an insufficient enrollment mode, and an unknown capability all return
+``allow=False`` with a clear ``reason``. Unreachable key material is an
+uncertainty like any other: if the issuer's key is absent from the keyring, or
+gpg is unavailable, the signature cannot be established and the request is
+DENIED rather than waved through.
 
 Obligations
 -----------
@@ -72,7 +88,7 @@ from .pairing import (
     list_devices,
     mode_satisfies,
 )
-from .tokens import Capability, SignedToken, is_revoked, list_tokens
+from .tokens import Capability, SignedToken, is_revoked, list_tokens, signature_verifies
 
 #: Obligation kind for the audit record every decision emits.
 OBLIGATION_AUDIT = "audit"
@@ -501,9 +517,11 @@ def decide(
     """Decide whether ``subject`` may exercise ``capability`` on ``resource``.
 
     Deterministic from cryptographic facts only (enrollment mode + granted
-    capability tokens). Authentication is NOT done here (the PEP authenticates
-    the caller and yields ``subject`` before calling this). Fails closed on every
-    uncertainty. Emits an AUDIT obligation on every decision.
+    capability tokens + a verifying signature on the granting token).
+    Authentication is NOT done here (the PEP authenticates the caller and yields
+    ``subject`` before calling this). Fails closed on every uncertainty,
+    including key material that cannot be reached to verify a signature. Emits
+    an AUDIT obligation on every decision.
 
     Args:
         subject: The already-authenticated subject identity (e.g. an fqid).
@@ -585,11 +603,36 @@ def decide(
             context,
         )
 
-    # 5. All cryptographic facts satisfied -> allow.
+    # 5. Signature fact. A token file sitting in the store proves only that
+    # SOMETHING wrote a file. The store is Syncthing-replicated, so "can write
+    # into the store" is a far wider set of principals than one box, and until
+    # this gate existed a plain unsigned JSON file granted whatever capabilities
+    # it named -- including the skcode RCE pair. A token whose signature is
+    # absent, malformed, made over different bytes, or made by a key other than
+    # the issuer it names is treated as if it were not there at all.
+    signed = [t for t in usable if signature_verifies(t)]
+    if not signed:
+        return _deny(
+            subject,
+            capability,
+            resource,
+            (
+                f"token granting {rule.required_capability!r} is unsigned or its "
+                f"signature does not verify against its declared issuer"
+            ),
+            context,
+        )
+
+    # 6. Capability, enrollment mode, token validity, and signature all check
+    # out -> allow. Note what this does NOT assert: that the issuer was
+    # AUTHORIZED to grant this capability. The signature is pinned to the
+    # issuer the payload declares, and the trust anchor is the local gpg keyring
+    # (outside the replicated store), but a trusted-issuer allowlist is a
+    # separate fleet-wide policy this kernel does not yet carry.
     granted_all = any(
         t.payload.has_capability(Capability.ALL.value)
         and Capability.ALL.value in t.payload.capabilities
-        for t in usable
+        for t in signed
     )
     reason = (
         f"granted: subject enrolled {mode.value} (>= {rule.minimum_mode.value}) with an active "
