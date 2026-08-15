@@ -18,7 +18,7 @@ from .authz import (
     Obligation,
     decide,
 )
-from .exceptions import SubjectNamingError
+from .exceptions import OperatorAuthError, SubjectNamingError
 from .manifest import (
     DEFAULT_SIG_SUFFIX,
     ManifestSigningError,
@@ -30,17 +30,32 @@ from .manifest import (
 )
 from .pairing import (
     DeviceRecord,
+    DeviceStore,
     Enrollment,
     EnrollmentMode,
+    OperatorSession,
     PairingError,
     PairingStore,
     PairingWindow,
     approve,
+    approve_device,
+    consume_challenge,
+    device_fingerprint,
     enroll_device,
+    is_device_approved,
+    is_device_revoked,
+    is_session_revoked,
+    issue_challenge,
     list_devices,
+    mint_operator_session,
     mode_satisfies,
     open_window,
     revoke,
+    revoke_device,
+    revoke_session,
+    unrevoke_device,
+    verify_device_signature,
+    verify_operator_session,
 )
 from .provisioning import SKCHAT_SCOPES, provision_subject
 from .subject import ORG_DOMAIN, canonical_subject
@@ -114,6 +129,24 @@ __all__ = [
     "DeviceRecord",
     "PairingWindow",
     "PairingStore",
+    # operator session (Unified Consent Plane Phase 1: one operator identity,
+    # lifted from skchat's operator_auth.py -- see capauth.pairing.operator_session)
+    "OperatorAuthError",
+    "OperatorSession",
+    "mint_operator_session",
+    "verify_operator_session",
+    "approve_device",
+    "is_device_approved",
+    "revoke_device",
+    "unrevoke_device",
+    "is_device_revoked",
+    "revoke_session",
+    "is_session_revoked",
+    "device_fingerprint",
+    "issue_challenge",
+    "consume_challenge",
+    "verify_device_signature",
+    "DeviceStore",
     # provisioning (subject enrollment + the skchat scope set)
     "SKCHAT_SCOPES",
     "provision_subject",
