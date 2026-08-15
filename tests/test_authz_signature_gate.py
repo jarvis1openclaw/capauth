@@ -72,8 +72,20 @@ def _make_home(tmp_path: Path, issuer_fpr: str, *, mode=EnrollmentMode.VERIFIED)
     (home / "identity" / "identity.json").write_text(
         json.dumps({"fingerprint": issuer_fpr}), encoding="utf-8"
     )
+    # Card N10: verified/attested enrollment now requires real evidence, so the
+    # module-level fake PUBKEY no longer enrolls. Mint a genuine keypair and a
+    # proof bound to this exact subject. The fixture is incidental setup here;
+    # what this file actually tests is the TOKEN signature gate, not enrollment.
+    from tests.conftest import enrolled_verified_credentials
+
+    pubkey, proof = enrolled_verified_credentials(SUBJECT)
     enrollment = enroll_device(
-        PUBKEY, list(ALL_CAPABILITIES), mode=mode, base_dir=home, subject=SUBJECT
+        pubkey,
+        list(ALL_CAPABILITIES),
+        mode=mode,
+        base_dir=home,
+        subject=SUBJECT,
+        proof=proof,
     )
     approve(enrollment.enrollment_id, "operator@chef.skworld.io", base_dir=home)
     return home
