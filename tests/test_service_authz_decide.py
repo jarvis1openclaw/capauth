@@ -28,7 +28,7 @@ import pytest
 from capauth.pairing import EnrollmentMode, approve, enroll_device
 from capauth.tokens import issue_token
 
-SUBJECT = "alice@chef.skworld"
+SUBJECT = "alice@chef.skworld.io"
 PUBKEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----"
 AUTHZ_TOKEN = "test-authz-service-token"
 AUTH_HEADER = {"Authorization": f"Bearer {AUTHZ_TOKEN}"}

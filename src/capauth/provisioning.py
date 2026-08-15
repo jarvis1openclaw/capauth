@@ -45,6 +45,9 @@ def provision_subject(
 
     Args:
         subject: The subject identity the PDP will see (e.g. an fqid).
+            Canonicalized at enrollment (card N3, ``capauth.pairing.enroll_device``);
+            a translatable legacy shape is normalized, a non-conforming one is
+            refused (:class:`capauth.exceptions.SubjectNamingError`).
         scopes: Capabilities to grant; defaults to the skchat scopes.
         mode: Enrollment mode for the device (verified | attested | tofu).
         pubkey: The subject's public key; defaults to the subject string (the PDP
@@ -61,7 +64,9 @@ def provision_subject(
         base_dir: Injectable storage root (defaults to ~/.skcapstone).
 
     Returns:
-        A summary dict: subject, device_id, token_id, mode, scopes.
+        A summary dict: subject (the CANONICAL form actually enrolled/granted,
+        which may differ from the ``subject`` argument if it was a translatable
+        legacy shape), device_id, token_id, mode, scopes.
     """
     granted = list(scopes) if scopes is not None else list(SKCHAT_SCOPES)
     base = Path(base_dir).expanduser() if base_dir is not None else default_base_dir()
@@ -69,11 +74,17 @@ def provision_subject(
     enrollment = enroll_device(
         pubkey or subject, granted, mode=mode, subject=subject, base_dir=base
     )
+    # enroll_device canonicalizes subject (card N3); the token MUST be issued
+    # under the same canonical spelling the device was enrolled under, or
+    # decide() (an exact string match over both facts) can never correlate
+    # them. Falls back to the caller's raw subject only in the degenerate case
+    # enroll_device itself had nothing to canonicalize (see its docstring).
+    canonical_subject = enrollment.subject or subject
     device = approve(enrollment.enrollment_id, approver, base_dir=base)
-    token = issue_token(base, subject, granted, ttl_hours=ttl_hours, sign=sign)
+    token = issue_token(base, canonical_subject, granted, ttl_hours=ttl_hours, sign=sign)
 
     return {
-        "subject": subject,
+        "subject": canonical_subject,
         "device_id": device.device_id,
         "token_id": token.payload.token_id,
         "mode": device.mode.value,

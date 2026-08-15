@@ -4,6 +4,8 @@ Covers, all with an injected ``tmp_path`` storage root (never the real
 ``~/.skcapstone`` registry):
 
 * each mode's enroll + approve happy path (verified / attested / tofu);
+* ``enroll_device`` canonicalizes a translatable legacy subject shape and
+  refuses a subject that still does not conform (card N3);
 * the operator window (open, nonce check, expiry, max_accepts, rate limit);
 * revoke as a state transition;
 * list_devices filtering by subject + include_revoked;
@@ -20,6 +22,7 @@ import json
 
 import pytest
 
+from capauth.exceptions import SubjectNamingError
 from capauth.pairing import (
     SIDECAR_KEY,
     SIDECAR_VERSION,
@@ -130,6 +133,10 @@ def test_device_record_satisfies_honors_revocation():
     ],
 )
 def test_enroll_and_approve_happy_path(tmp_path, mode, extra):
+    # "phone@chef.skworld" is the missing-TLD legacy shape agent_identity has
+    # shipped as its fqid field (IDENTITY_NAMING_STANDARD.md sec 2.5); enroll_device
+    # normalizes it to the canonical "phone@chef.skworld.io" (card N3), it is
+    # not refused.
     enr = enroll_device(
         "device-pubkey-material",
         ["skchat.send", "skchat.inbox"],
@@ -141,6 +148,7 @@ def test_enroll_and_approve_happy_path(tmp_path, mode, extra):
     assert enr.mode == mode
     assert enr.requested_scopes == ["skchat.send", "skchat.inbox"]
     assert enr.fingerprint  # derived
+    assert enr.subject == "phone@chef.skworld.io"
     # mode-specific evidence rode onto the record
     for key, val in extra.items():
         assert getattr(enr, key) == val
@@ -150,7 +158,7 @@ def test_enroll_and_approve_happy_path(tmp_path, mode, extra):
     assert dev.mode == mode
     assert dev.scopes == ["skchat.send", "skchat.inbox"]
     assert dev.approved_by == "chef@skworld.io"
-    assert dev.subject == "phone@chef.skworld"
+    assert dev.subject == "phone@chef.skworld.io"
     assert not dev.revoked
 
     # it now shows up in the registry, and the pending enrollment is consumed
@@ -165,9 +173,127 @@ def test_approve_unknown_enrollment_raises(tmp_path):
 
 
 def test_enroll_defaults_subject_to_fingerprint(tmp_path):
+    # No subject given: defaults to the bare fingerprint, then canonicalizes to
+    # the one legal prefixed subject class for a fingerprint-only seat (card N3).
+    # canonical_subject lowercases (case is not an identity dimension), while
+    # ``fingerprint`` itself rides the record unmodified, so the two differ in
+    # case here.
     enr = enroll_device("some-key", ["s"], mode="tofu", base_dir=tmp_path)
-    assert enr.subject == enr.fingerprint
     assert enr.fingerprint == fingerprint_for("some-key")
+    assert enr.subject == f"device:{enr.fingerprint.lower()}"
+
+
+# --------------------------------------------------------------------------
+# subject canonicalization (card N3, bab1cca6): enroll_device refuses what
+# does not conform to IDENTITY_NAMING_STANDARD.md, normalizing a translatable
+# legacy shape rather than rejecting it outright.
+# --------------------------------------------------------------------------
+
+
+def test_enroll_device_refuses_a_non_conforming_subject(tmp_path):
+    # Not ASCII/dot-clean/grammar-matching, and no alias translates it: this is
+    # exactly the naming defect that used to surface later, at decide() time, as
+    # an opaque "unknown subject" deny. It is refused HERE instead, at the one
+    # entry point that writes a subject into the store.
+    with pytest.raises(SubjectNamingError):
+        enroll_device(
+            "k", ["s"], mode="tofu", base_dir=tmp_path, subject="not-a-conforming-subject"
+        )
+    # nothing was persisted
+    assert list_devices(base_dir=tmp_path) == []
+
+
+def test_enroll_device_refuses_trailing_dot():
+    with pytest.raises(SubjectNamingError):
+        enroll_device("k", ["s"], mode="tofu", subject="alice@chef.skworld.io.")
+
+
+def test_enroll_device_refuses_non_ascii_subject():
+    with pytest.raises(SubjectNamingError):
+        enroll_device("k", ["s"], mode="tofu", subject="lümina@chef.skworld.io")
+
+
+@pytest.mark.parametrize(
+    "legacy,canonical",
+    [
+        ("capauth:lumina@skworld.io", "lumina@chef.skworld.io"),
+        ("lumina@skworld.io", "lumina@chef.skworld.io"),
+        ("architect@chef.skworld", "architect@chef.skworld.io"),
+        ("architect@skcapstone.local", "architect@chef.skworld.io"),
+        (
+            "operator:0a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d",
+            "device:0a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d",
+        ),
+        ("CAPAUTH:Lumina@Skworld.io", "lumina@chef.skworld.io"),
+    ],
+)
+def test_enroll_device_normalizes_every_documented_legacy_shape(tmp_path, legacy, canonical):
+    # The six shapes subject.py's own docstring documents finding live in the
+    # pairing store: enroll_device translates every one, it does not refuse
+    # them (a translatable legacy shape is not the naming defect this card
+    # closes; an UNtranslatable one is).
+    enr = enroll_device(f"key-{legacy}", ["s"], mode="tofu", base_dir=tmp_path, subject=legacy)
+    assert enr.subject == canonical
+
+
+def test_enroll_device_normalizes_a_bare_device_fingerprint():
+    # skchat.pairing_mirror.mirror_admission presents a bare peer fingerprint
+    # (no "device:" prefix) as ``subject``: the ONE legal prefixed subject
+    # class is "device:<fingerprint>", so this is normalized rather than
+    # refused, not a new alias invented ad hoc.
+    bare_fp = "0a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d"
+    enr = enroll_device("some-device-key", ["s"], mode="tofu", subject=bare_fp)
+    assert enr.subject == f"device:{bare_fp}"
+
+
+def test_list_devices_finds_a_bare_fingerprint_enrollment_by_the_same_bare_query(tmp_path):
+    # A caller that enrolled under a bare fingerprint (normalized to
+    # "device:<fp>" at write time) must still be able to look the device up by
+    # that SAME bare fingerprint at read time (skchat.pairing_mirror.mirror_revocation
+    # does exactly this), or normalizing at enroll_device silently breaks
+    # revocation for every TOFU-admitted peer.
+    bare_fp = "0a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d"
+    enr = enroll_device("some-device-key", ["s"], mode="tofu", base_dir=tmp_path, subject=bare_fp)
+    approve(enr.enrollment_id, "skchat", base_dir=tmp_path)
+
+    found = list_devices(bare_fp, base_dir=tmp_path)
+    assert len(found) == 1
+    assert found[0].subject == f"device:{bare_fp}"
+
+
+def test_list_devices_still_finds_a_pre_n3_non_canonical_record(tmp_path):
+    # A device enrolled before this card, under a subject canonical_subject
+    # cannot translate, must remain findable by that exact raw string: this
+    # card canonicalizes going forward, it is not a data migration.
+    peers = tmp_path / "peers"
+    peers.mkdir(parents=True)
+    (peers / "legacyhandle.json").write_text(
+        json.dumps(
+            {
+                "name": "legacyhandle",
+                "identity": "legacyhandle",
+                "fingerprint": "AA",
+                "pairing": {
+                    "version": SIDECAR_VERSION,
+                    "devices": [
+                        {
+                            "device_id": "pre-n3-device",
+                            "subject": "legacyhandle",
+                            "pubkey": "k",
+                            "fingerprint": "AA",
+                            "mode": "tofu",
+                            "scopes": [],
+                            "approved_by": "chef",
+                            "approved_at": "2026-01-01T00:00:00+00:00",
+                            "revoked": False,
+                        }
+                    ],
+                },
+            }
+        )
+    )
+    found = list_devices("legacyhandle", base_dir=tmp_path)
+    assert [d.device_id for d in found] == ["pre-n3-device"]
 
 
 # --------------------------------------------------------------------------
@@ -250,7 +376,9 @@ def test_window_rate_limit(tmp_path):
 
 
 def test_revoke_is_a_state_transition(tmp_path):
-    enr = enroll_device("k", ["skchat.send"], mode="verified", base_dir=tmp_path, subject="laptop")
+    enr = enroll_device(
+        "k", ["skchat.send"], mode="verified", base_dir=tmp_path, subject="laptop@chef.skworld.io"
+    )
     dev = approve(enr.enrollment_id, "chef", base_dir=tmp_path)
     assert not dev.revoked
 
@@ -260,7 +388,7 @@ def test_revoke_is_a_state_transition(tmp_path):
     assert revoked.revoked_at is not None
 
     # persisted: reloading shows it revoked, and it no longer satisfies its mode
-    again = list_devices("laptop", base_dir=tmp_path)[0]
+    again = list_devices("laptop@chef.skworld.io", base_dir=tmp_path)[0]
     assert again.revoked
     assert not again.satisfies("verified")
 
@@ -279,20 +407,24 @@ def test_revoke_unknown_device_raises(tmp_path):
 
 
 def test_list_devices_filters_by_subject(tmp_path):
-    e1 = enroll_device("ka", ["s"], mode="tofu", base_dir=tmp_path, subject="alice")
-    e2 = enroll_device("kb", ["s"], mode="tofu", base_dir=tmp_path, subject="bob")
-    e3 = enroll_device("kc", ["s"], mode="attested", base_dir=tmp_path, subject="alice")
+    e1 = enroll_device(
+        "ka", ["s"], mode="tofu", base_dir=tmp_path, subject="alice@chef.skworld.io"
+    )
+    e2 = enroll_device("kb", ["s"], mode="tofu", base_dir=tmp_path, subject="bob@chef.skworld.io")
+    e3 = enroll_device(
+        "kc", ["s"], mode="attested", base_dir=tmp_path, subject="alice@chef.skworld.io"
+    )
     for e in (e1, e2, e3):
         approve(e.enrollment_id, "chef", base_dir=tmp_path)
 
-    alice = list_devices("alice", base_dir=tmp_path)
-    assert {d.subject for d in alice} == {"alice"}
+    alice = list_devices("alice@chef.skworld.io", base_dir=tmp_path)
+    assert {d.subject for d in alice} == {"alice@chef.skworld.io"}
     assert len(alice) == 2
-    bob = list_devices("bob", base_dir=tmp_path)
+    bob = list_devices("bob@chef.skworld.io", base_dir=tmp_path)
     assert len(bob) == 1
     assert len(list_devices(base_dir=tmp_path)) == 3
     # case-insensitive
-    assert len(list_devices("ALICE", base_dir=tmp_path)) == 2
+    assert len(list_devices("ALICE@CHEF.SKWORLD.IO", base_dir=tmp_path)) == 2
 
 
 # --------------------------------------------------------------------------
@@ -342,7 +474,9 @@ def test_sidecar_preserves_existing_v1_peer_shape(tmp_path):
 
 
 def test_new_device_creates_v1_shaped_record(tmp_path):
-    enr = enroll_device("k", ["skchat.send"], mode="tofu", base_dir=tmp_path, subject="newphone")
+    enr = enroll_device(
+        "k", ["skchat.send"], mode="tofu", base_dir=tmp_path, subject="newphone@chef.skworld.io"
+    )
     approve(enr.enrollment_id, "chef", base_dir=tmp_path)
 
     peer_files = list((tmp_path / "peers").glob("*.json"))
@@ -385,18 +519,22 @@ def test_sidecar_revocation_round_trips_on_existing_peer(tmp_path):
 
 def test_multiple_devices_per_subject_coexist(tmp_path):
     # a subject pairs two distinct device keys; both persist under one peer file
-    e1 = enroll_device("phone-key", ["s"], mode="verified", base_dir=tmp_path, subject="alice")
-    e2 = enroll_device("laptop-key", ["s"], mode="tofu", base_dir=tmp_path, subject="alice")
+    e1 = enroll_device(
+        "phone-key", ["s"], mode="verified", base_dir=tmp_path, subject="alice@chef.skworld.io"
+    )
+    e2 = enroll_device(
+        "laptop-key", ["s"], mode="tofu", base_dir=tmp_path, subject="alice@chef.skworld.io"
+    )
     d1 = approve(e1.enrollment_id, "chef", base_dir=tmp_path)
     d2 = approve(e2.enrollment_id, "chef", base_dir=tmp_path)
 
     peer_files = list((tmp_path / "peers").glob("*.json"))
     assert len(peer_files) == 1  # one subject, one file
-    alice = list_devices("alice", base_dir=tmp_path)
+    alice = list_devices("alice@chef.skworld.io", base_dir=tmp_path)
     assert {d.device_id for d in alice} == {d1.device_id, d2.device_id}
     # revoking one leaves the other intact
     revoke(d1.device_id, "lost", base_dir=tmp_path)
-    live = list_devices("alice", base_dir=tmp_path, include_revoked=False)
+    live = list_devices("alice@chef.skworld.io", base_dir=tmp_path, include_revoked=False)
     assert [d.device_id for d in live] == [d2.device_id]
 
 
@@ -404,7 +542,7 @@ def test_store_root_is_injectable_and_isolated(tmp_path):
     # two independent roots do not see each other's devices
     a = tmp_path / "a"
     b = tmp_path / "b"
-    e = enroll_device("k", ["s"], mode="tofu", base_dir=a, subject="x")
+    e = enroll_device("k", ["s"], mode="tofu", base_dir=a, subject="x@chef.skworld.io")
     approve(e.enrollment_id, "chef", base_dir=a)
     assert len(list_devices(base_dir=a)) == 1
     assert list_devices(base_dir=b) == []
@@ -413,7 +551,9 @@ def test_store_root_is_injectable_and_isolated(tmp_path):
 def test_unique_device_ids_across_enrollments(tmp_path):
     ids = set()
     for i in range(5):
-        e = enroll_device(f"k{i}", ["s"], mode="tofu", base_dir=tmp_path, subject=f"s{i}")
+        e = enroll_device(
+            f"k{i}", ["s"], mode="tofu", base_dir=tmp_path, subject=f"s{i}@chef.skworld.io"
+        )
         d = approve(e.enrollment_id, "chef", base_dir=tmp_path)
         ids.add(d.device_id)
     assert len(ids) == 5
