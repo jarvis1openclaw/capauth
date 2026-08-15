@@ -6,7 +6,37 @@ All notable changes to `capauth` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docs described a CLI that does not exist.** `SOP.md` and `README.md` told
+  operators to run `capauth did generate` and `capauth did identity-card`. **There
+  is no `did` command group**; `capauth.cli:main` has exactly 16 top-level commands
+  and `did` is not one of them, so both invocations exit non-zero. Replaced with the
+  real surfaces: the `capauth.did.DIDDocumentGenerator` library API, and skcapstone's
+  `did_show` / `did_publish` / `did_identity_card` MCP tools. `docs/ARCHITECTURE.md`
+  corrected too.
+- **SOP section 5 documented the wrong deployment.** It described a single Tier 2
+  SKStacks/Traefik cluster workload behind a Cloudflare Tunnel. What a fleet node
+  actually runs is a loopback console script under `capauth-authz.service`
+  (`capauth-service --host 127.0.0.1 --port 8420`), with no ingress at all. Section 5
+  now separates three scenarios and labels which one is live here. It also corrects
+  the claim that the standalone default bind is `0.0.0.0`: the code default is
+  `127.0.0.1`, and `0.0.0.0` triggers a startup warning.
+- **SOP quoted `SemVer: 0.2.3`**, a number that matched nothing. `pyproject.toml` is
+  `dynamic = ["version"]` via setuptools-scm, the newest release tag is `v0.2.20`,
+  and `src/capauth/__init__.py` hardcodes `0.2.15`. Section 9 now says where the
+  version comes from and flags the hardcoded literal as an open **code** follow-up.
+- **SOP named a test gate CI does not run** (`black --check`). Section 4 now cites
+  `ci.yml` verbatim and explains why the narrower `pytest.yml` is not a substitute.
+- Documented that there is **no `/health` route**; `/capauth/v1/status` is the probe.
+
 ### Added
+
+- **`docs-evidence` block + `.github/workflows/docs-check.yml`** (tiers 1,2). Nine
+  executable checks pin the documented entry points, the `127.0.0.1:8420` defaults,
+  the two named routes, the setuptools-scm version source, the CI gate, and the
+  **absence** of both `/health` and a `did` CLI group. All nine were negative-tested
+  by breaking the underlying fact (16 mutations, all correctly non-zero).
 
 - **sk-standards doc set** — `SOP.md` (9 sections + mermaid architecture &
   challenge-response diagrams), `SECURITY.md`, `CONTRIBUTING.md`,

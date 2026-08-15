@@ -51,7 +51,7 @@ flowchart TD
     USE --> SHOW["capauth profile show"]
     USE --> VER["capauth profile verify<br/>(check profile PGP signature)"]
     USE --> EXP["capauth export-pubkey<br/>(share with peers)"]
-    USE --> DID["capauth did generate"]
+    USE --> DID["DIDDocumentGenerator.generate()<br/>(library / MCP, NOT a capauth CLI command)"]
     USE --> LOGIN["capauth login &lt;service&gt;"]
 
     style INIT fill:#1d3461,color:#fff

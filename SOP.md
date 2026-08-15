@@ -26,8 +26,9 @@ agility via the `models.Algorithm` enum (additive suite-ids per NIST CSWP 39), a
 `CryptoBackend` ABC (`crypto/base.py`) with vetted backends (PGPy / GnuPG /
 Sequoia — **no hand-rolled primitives**), honest surface-scoped claims, and the
 **hybrid combiner is `HKDF(X25519_ss ‖ MLKEM768_ss)` — never XOR, never pure-PQ**
-(the ML-KEM-768 + X25519 key-wrap target). Live primitives are reportable via the
-ecosystem self-report (`sksecurity status`) and `capauth did identity-card`.
+(the ML-KEM-768 + X25519 key-wrap target). Live primitives are reportable via
+`capauth pqc-report` and `capauth doctor` (see section 7); there is **no `capauth did`
+CLI group**, the identity card is a library / MCP surface (section 7).
 
 **Standards anchored:** RFC 4880 / RFC 9580 (OpenPGP), RFC 7748 (X25519), RFC 8032
 (Ed25519), FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA), W3C DID-core,
@@ -113,8 +114,20 @@ sequenceDiagram
 
 Bind-mounts / data: identity lives at `~/.capauth/`; DID tiers write
 `~/.skcapstone/did/key.json` (T1), `~/.skcomms/well-known/did.json` (T2, Tailscale
-Serve), and Cloudflare KV (T3). The verification service exposes HTTP (port per
-deploy). Source map + full flows: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Serve), and Cloudflare KV (T3). The verification service listens on
+**`127.0.0.1:8420` by default** (`src/capauth/service/server.py`); see section 5 for
+the three deployment shapes and which one your node actually runs.
+Source map + full flows: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### Start here (entry-point files)
+
+| File | Why it is an entry point |
+|---|---|
+| `src/capauth/cli.py` | the `capauth` console script (`capauth.cli:main`); the click group whose 16 top-level commands are the entire CLI surface |
+| `src/capauth/service/server.py` | the `capauth-service` console script; owns the `127.0.0.1` / `8420` defaults and the 0.0.0.0 startup warning |
+| `src/capauth/service/app.py` | the FastAPI app: every HTTP route, including `POST /v1/authz/decide` and `GET /capauth/v1/status` |
+| `src/capauth/identity.py` | the auth primitive itself: create / respond to / verify a challenge |
+| `src/capauth/did.py` | `DIDDocumentGenerator`, `DIDTier`, `DIDContext`; all three DID tiers plus the identity card |
 
 ---
 
@@ -143,9 +156,14 @@ see project memory `sequoia-pqc-backend-build`).
 ## 4. Test
 
 ```bash
-pytest                           # tests/ — identity, did, profile, resolver, service, pqc
-ruff check . && black --check .
+python -m pytest tests/ -v --tb=short --cov=capauth    # exactly what CI runs
+ruff format --check src/ tests/ && ruff check src/     # exactly what CI lints
 ```
+
+Use `python -m pytest`, not bare `pytest`: the `src/` layout plus a sibling `capauth`
+directory on the path can otherwise import the wrong package. Note the lint gate is
+**ruff only** (pinned `ruff==0.15.4` in CI). `[tool.black]` is still in
+`pyproject.toml` but **black is not run by CI**, so do not treat it as a gate.
 
 | Suite | Covers |
 |---|---|
@@ -155,8 +173,14 @@ ruff check . && black --check .
 | `tests/` pqc | PQC root works **end-to-end** through capauth (Sequoia v6 composite); honest PQC representation for v6 roots (no false RSA label) |
 | `tests/` service | signed challenge → OIDC claims; Authentik stage flow |
 
-The green-bar gate that blocks release: all of the above plus the
-`skcapstone doctor` identity invariants.
+The green-bar gate that blocks release: `.github/workflows/ci.yml`, which runs the
+pytest job across Python 3.10 / 3.11 / 3.12 (no `|| true`, no `continue-on-error`),
+the ruff lint job, and a `python -m build` + `twine check` job. A second workflow
+`.github/workflows/pytest.yml` is **narrower and cannot substitute for it**: it
+`--ignore`s `tests/test_integration.py`, `--deselect`s four known-failing tests, and
+its `integration` job is `continue-on-error: true`, so that job is red-tolerant by
+design. `ci.yml` is the honest gate. Add the `skcapstone doctor` identity invariants
+on top when the change touches the resolver.
 
 ---
 
@@ -219,24 +243,62 @@ python scripts/provision_agent_profiles.py --allow-new-keys   # ONLY for a genui
 
 ### Front-end / Exposure
 
-Per [sk-standards `UNIFIED_INGRESS_STANDARD.md`](https://github.com/smilinTux/sk-standards/blob/main/standards/UNIFIED_INGRESS_STANDARD.md):
+Per [sk-standards `UNIFIED_INGRESS_STANDARD.md`](https://github.com/smilinTux/sk-standards/blob/main/standards/UNIFIED_INGRESS_STANDARD.md).
+capauth has more than one deployment shape, and they have very different exposure.
+**Scenario A is what a fleet node actually runs today.** Do not read the cluster
+scenario as a description of your box.
 
-- **Tier:** `2 SKStacks/Traefik`. The PGP-SSO bridge (`authentik-capauth` + the
-  `capauth-service` OIDC IdP, `src/capauth/service/app.py`) runs as cluster workloads on
-  SKStacks v2 / RKE2 / k3d (cap7 LIVE), Traefik label-routed, fronted by ONE
-  **Cloudflare Tunnel** — the proven **sksso** pattern (`runbooks/sksso-cloudflared-*`).
-- **Public `:443` route(s):**
-  - SSO bridge at `capauth-skstack13.skworld.io` / `capauth-skstack41.skworld.io` —
-    OIDC discovery `GET /.well-known/openid-configuration` + `GET /.well-known/jwks.json`,
-    challenge `POST /capauth/v1/challenge`, verify `POST /capauth/v1/verify`,
-    `GET /capauth/v1/status`, callback `GET /capauth/v1/callback`.
-  - Bunker remote-signer relay (CF-Tunnel **or** Tailscale Funnel) —
-    `POST /bunker/session`, `WS /bunker/ws`, and the phone PWA under `/bunker/`.
-- **Bind address:** behind the tunnel `capauth-service` listens on `:8420` as a
-  cluster-internal **ClusterIP** Service (Traefik is the only client). The standalone
-  container's default `0.0.0.0:8420` (`service/server.py`) MUST be constrained to
-  `127.0.0.1` / tailnet when not behind Traefik — **never an internet-exposed port**
-  (the tunnel is the sole ingress).
+#### Scenario A (default, and what runs on the fleet node): loopback PDP, no ingress
+
+- **Tier:** **loopback only. No public `:443` route, no tunnel, no reverse proxy.**
+- **What runs:** a plain console script under a user systemd unit, not a container
+  and not a cluster workload:
+
+  ```
+  unit         capauth-authz.service        (systemd --user)
+  ExecStart    ~/.skenv/bin/capauth-service --host 127.0.0.1 --port 8420
+  drop-in      capauth-authz.service.d/restart-storm.conf  (SERVICE_UNIT_STANDARD Tier A backoff)
+  gate         CAPAUTH_AUTHZ_TOKEN from ~/.config/capauth/authz-service.env
+               (unset = the decide endpoint answers 503 / disabled)
+  ```
+
+  Verify the EFFECTIVE command, not the fragment, because drop-ins can rewrite it:
+  `systemctl --user show capauth-authz.service -p ExecStart -p DropInPaths`.
+- **Consumer:** skgateway's PEP, co-located on the same node, calling
+  `POST /v1/authz/decide` (`src/capauth/service/app.py:553`). Loopback is the
+  network-layer gate, the bearer token is the application-layer gate.
+- **Bind address:** `127.0.0.1:8420`. **These are the code defaults**, not just the
+  unit's flags: `--host` defaults to `"127.0.0.1"` and `--port` to `8420` in
+  `src/capauth/service/server.py`. Passing `0.0.0.0` still works but prints a
+  **startup WARNING** (`server.py:50-53`) because capauth is a PDP and must never
+  sit on a public interface.
+- **Self-report / liveness:** `GET /capauth/v1/status` (`app.py:395`).
+  **There is no `/health` route.** Do not add one to a monitor config expecting 200.
+
+#### Scenario B (optional, repo-provided): standalone container
+
+`deploy/capauth-service/docker-compose.yml` publishes `${CAPAUTH_PORT:-8420}:8420`
+from `ghcr.io/smilintux/capauth:latest`, with a healthcheck that curls
+`/capauth/v1/status`. Note that a compose `ports:` mapping binds all interfaces by
+default: constrain it to `127.0.0.1:8420:8420` or a tailnet address unless something
+else terminates ingress.
+
+#### Scenario C (elsewhere in the fleet, NOT deployed from this repo): the SSO bridge
+
+The Authentik PGP-SSO bridge (`authentik-capauth` + the `capauth-service` OIDC IdP)
+and the bunker remote-signer relay are documented as running behind a Cloudflare
+Tunnel at `capauth-skstack41.skworld.io` (see
+[docs/CAPAUTH_BUNKER_REMOTE_SIGNER.md](docs/CAPAUTH_BUNKER_REMOTE_SIGNER.md) and
+[docs/AUTHENTIK_DEPLOYMENT_SKSSO.md](docs/AUTHENTIK_DEPLOYMENT_SKSSO.md)). If that is
+live it is a separate deployment: **this repository contains no Kubernetes manifest,
+no Traefik label, and no tunnel config for it.** The routes those docs describe are
+`GET /.well-known/openid-configuration`, `GET /.well-known/jwks.json`,
+`POST /capauth/v1/challenge`, `POST /capauth/v1/verify`, `GET /capauth/v1/status`,
+`GET /capauth/v1/callback`, plus `POST /bunker/session`, `WS /bunker/ws`
+(`app.py:1525`) and the phone PWA under `/bunker/`. All of those handlers do exist in
+`src/capauth/service/app.py`; what is unverified from this repo is that any cluster is
+currently serving them. Treat the hostnames as claims to confirm against the live
+tunnel before you rely on them.
 
 ---
 
@@ -259,20 +321,42 @@ never embedded in a DID document.
 
 ## 7. API / Reference
 
-**CLI (selected):**
+**CLI.** The `capauth` entry point is `capauth.cli:main` (`pyproject.toml`
+`[project.scripts]`), a `click` group. Its **complete** set of top-level commands is:
+
+```
+discover  doctor  export-pubkey  init  login  manifest  mesh  peers
+pma  pqc-report  profile  register  setup  sync  token  verify
+```
 
 ```bash
 capauth init --name "Chef" --email "..."     # create sovereign profile (PGP keypair)
 capauth profile show | verify                # display / verify signature integrity
 capauth export-pubkey [-o file.asc]          # export ASCII-armored public key
 capauth verify --pubkey peer.pub.asc         # challenge-response round-trip
-capauth did generate --tier key|mesh|public  # W3C DID at the chosen privacy tier
 capauth login <service_url>                  # passwordless PGP login (caches OIDC token)
 capauth setup forgejo --capauth-url <url>    # generate Forgejo OIDC app.ini block
 capauth mesh discover | peers | announce     # P2P peer mesh
 capauth pma request | approve | verify       # PMA membership (Fiducia Communitatis)
 capauth register --org smilintux --name ...  # register with a sovereign org
+capauth doctor                               # self-report
+capauth doctor custody [--json-out]          # key-custody / backup-age self-report
+capauth pqc-report                           # live PQC posture per surface
+capauth manifest sign | verify | list        # signed module manifests
+capauth token mint-audience ...              # mint an audience-scoped token
 ```
+
+> **There is NO `capauth did` command group.** Earlier revisions of this SOP and of
+> the README documented `capauth did generate` and `capauth did identity-card`; both
+> are fabrications, and running them exits non-zero with "No such command". The DID
+> surface is reachable two real ways:
+>
+> - **Library** (`src/capauth/did.py`): `DIDDocumentGenerator.from_profile()` then
+>   `.generate(DIDTier.KEY | WEB_MESH | WEB_PUBLIC)` (`:352`), `.generate_all()`
+>   (`:391`), or `.generate_identity_card()` (`:421`).
+> - **MCP tools shipped by skcapstone**, not by capauth:
+>   `did_show`, `did_publish`, `did_identity_card`
+>   (`skcapstone/src/skcapstone/mcp_tools/did_tools.py`).
 
 **Python:**
 
@@ -283,6 +367,21 @@ ident.capauth_uri   # 'capauth:lumina@skworld.io' (wire identity; always present
 ident.fqid          # 'lumina@chef.skworld'       (agent@operator.realm)
 ident.fingerprint   # 40/64-char PGP fp (None if placeholder)
 ```
+
+```python
+from capauth.did import DIDDocumentGenerator, DIDTier
+gen  = DIDDocumentGenerator.from_profile()   # reads ~/.capauth/ (public key only)
+doc  = gen.generate(DIDTier.KEY)             # tier 1; WEB_MESH / WEB_PUBLIC for 2 / 3
+card = gen.generate_identity_card()          # LOCAL-ONLY artifact, never published
+```
+
+**HTTP** (`src/capauth/service/app.py`, served by `capauth-service`): status
+`GET /capauth/v1/status` (`:395`), challenge `POST /capauth/v1/challenge` (`:229`),
+verify `POST /capauth/v1/verify` (`:266`), authz decision
+`POST /v1/authz/decide` (`:553`), OIDC discovery
+`GET /.well-known/openid-configuration` (`:600`) and `GET /.well-known/jwks.json`
+(`:653`). **No `/health` route exists**; `/capauth/v1/status` is the liveness probe
+(that is what the compose healthcheck curls).
 
 Full protocol + claim/token format: [docs/PROTOCOL.md](docs/PROTOCOL.md),
 [docs/CLAIMS.md](docs/CLAIMS.md). Crypto detail: [docs/CRYPTO_SPEC.md](docs/CRYPTO_SPEC.md).
@@ -300,6 +399,11 @@ Full protocol + claim/token format: [docs/PROTOCOL.md](docs/PROTOCOL.md),
 | DID shows a false `RSA` label on a v6 root | stale algorithm mapping | update to the honest v6/64-hex fingerprint representation (fixed: commit `0609800`) |
 | Authentik login loops / blueprint not applied | worker not running / `lifecycle.migrate` not overridden | see the four gotchas in [docs/authentik-capauth.md](docs/authentik-capauth.md) |
 | login works but no OIDC token cached | service URL / claims mismatch | re-run `capauth login <url>`; check the verification service logs |
+| `capauth did ...` → "No such command 'did'" | the command does not exist; older docs invented it | use the library (`DIDDocumentGenerator`) or the skcapstone MCP tools `did_show` / `did_publish` / `did_identity_card`. See section 7 |
+| `curl .../health` → 404 | there is no `/health` route | probe `GET /capauth/v1/status` instead |
+| `POST /v1/authz/decide` → 503 | `CAPAUTH_AUTHZ_TOKEN` unset, so the endpoint is disabled by design | populate `~/.config/capauth/authz-service.env`, then `systemctl --user restart capauth-authz` |
+| you edited capauth, rebuilt, and nothing changed | **you are in the stale duplicate checkout** | `~/clawd/capauth` is a **stale second clone** (measured 184 behind / 1 ahead / 72 dirty). The LIVE tree is `~/clawd/skcapstone-repos/capauth`, and it is what the venv actually imports. Confirm with `python -c "import capauth; print(capauth.__file__)"` and with the `__editable__.capauth-*.pth` in `~/.skenv/lib/python3.*/site-packages/`, which points at the live `src/`. Never resolve this by guessing from the directory name |
+| `capauth.__version__` disagrees with the tag / PyPI | the hardcoded literal in `__init__.py` | expected, see section 9. Trust `git describe --tags --match 'v[0-9]*'`, not the literal |
 
 ---
 
@@ -310,7 +414,23 @@ Full protocol + claim/token format: [docs/PROTOCOL.md](docs/PROTOCOL.md),
   FIPS 204/203, RFC 9580 v6) via `sequoia_backend.py`; live root migrates under the
   gated ceremony. As a signature/identity layer, **HNDL does not apply** — migration
   is real but deferrable.
-- **VERSION_LIFECYCLE phase:** Active (v2). **SemVer:** `0.2.3` (`pyproject.toml`).
+- **VERSION_LIFECYCLE phase:** Active (v2).
+- **Version:** **do not quote a number here, and do not trust one you find in the
+  tree.** `pyproject.toml` declares `dynamic = ["version"]`, so **the git tag IS the
+  version**, derived at build time by `setuptools-scm` under
+  `[tool.setuptools_scm]`, restricted to release tags by
+  `tag_regex = "^v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)$"` (the repo also carries
+  non-semver tags like `nextcloud-v0.3.0`, which would otherwise win). To read the
+  real version: `git describe --tags --match 'v[0-9]*'`, or
+  `python -c "import capauth; print(capauth.__version__)"` **from an installed
+  build**, or check PyPI.
+  - ⚠️ **Known drift, code follow-up, do not paper over it in docs:**
+    `src/capauth/__init__.py:156` still hardcodes `__version__ = "0.2.15"`. That
+    literal is stale and is not what a built wheel reports (the current editable
+    install resolves to `0.2.21.dev9+...`, and the newest release tag is `v0.2.20`).
+    Three sources therefore disagree. The fix belongs in `src/`, not here: make
+    `__init__.py` read the installed distribution metadata instead of carrying a
+    literal. Until that lands, treat `capauth.__version__` as unreliable.
 - **CRYPTOGRAPHY_STANDARD compliance:** see the header line above — agility enum +
   backend ABC + honest surface-scoped claims + hybrid combiner
   `HKDF(X25519 ‖ MLKEM768)` (never XOR / never pure-PQ) + ecosystem self-report.
@@ -321,3 +441,27 @@ Full protocol + claim/token format: [docs/PROTOCOL.md](docs/PROTOCOL.md),
 ---
 
 **SK = staycuriousANDkeepsmilin 🐧** — *capauth: you are not a user, you are a sovereign.*
+
+<!-- docs-evidence
+verified: 2026-08-15
+checks:
+  - name: both console-script entry points are exactly as section 7 documents
+    run: grep -qxF 'capauth = "capauth.cli:main"' pyproject.toml && grep -qxF 'capauth-service = "capauth.service.server:main"' pyproject.toml
+  - name: capauth-service still defaults to 127.0.0.1 and port 8420 (section 5 Scenario A)
+    run: grep -qE '^\s*default="127\.0\.0\.1",\s*$' src/capauth/service/server.py && grep -qE 'default=8420, type=int' src/capauth/service/server.py
+  - name: a 0.0.0.0 bind still emits the documented startup WARNING
+    run: grep -qE '^\s+if host in \("0\.0\.0\.0"' src/capauth/service/server.py
+  - name: the two routes section 5 names still exist (status, authz decide)
+    run: grep -qE '^@app\.get\("/capauth/v1/status"' src/capauth/service/app.py && grep -qE '^@app\.post\("/v1/authz/decide"' src/capauth/service/app.py
+  - name: NO /health route exists, as sections 5 and 8 assert
+    run: ! grep -qE '^@app\.(get|post|put|api_route|websocket)\("/health' src/capauth/service/app.py
+  - name: NO capauth did command group exists, as section 7 asserts
+    run: ! grep -qE "^def did\(|@main\.(group|command)\([\"']did[\"']" src/capauth/cli.py
+  - name: version stays setuptools-scm derived, never a literal in pyproject
+    run: grep -qxF 'dynamic = ["version"]' pyproject.toml && ! grep -qE '^version\s*=' pyproject.toml
+  - name: ci.yml still runs the documented pytest gate and it cannot be short-circuited
+    run: grep -qF 'python -m pytest tests/ -v --tb=short --cov=capauth' .github/workflows/ci.yml && ! grep -qE 'python -m pytest.*(\|\||;\s*true|continue-on-error)' .github/workflows/ci.yml
+  - name: ci.yml lint gate is ruff (section 4 says black is NOT a gate)
+    run: grep -qF 'ruff format --check src/ tests/' .github/workflows/ci.yml
+-->
+
