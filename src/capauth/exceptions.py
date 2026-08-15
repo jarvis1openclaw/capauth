@@ -77,3 +77,12 @@ class StorageError(CapAuthError):
 
 class BackendError(CapAuthError):
     """Raised when the requested crypto backend is unavailable or misconfigured."""
+
+
+class OperatorAuthError(CapAuthError):
+    """Raised by :mod:`capauth.pairing.operator_session` for any operator-session
+    verification failure: a malformed/expired/wrong-secret token, the wrong
+    tier, a revoked session, a revoked device, or a device with no approved
+    standing. One error type covers all of these on purpose -- callers get a
+    generic 401/403, never an oracle distinguishing which check failed.
+    """

@@ -24,6 +24,22 @@ All notable changes to `capauth` are documented here. The format is based on
   alone so it can never race a concurrent mint into loss. A trailing `Z` UTC suffix
   is normalized before parsing so GC works on Python 3.10 (whose `fromisoformat`
   predates `Z` support).
+- **Operator session moved into capauth** (`capauth.pairing.operator_session`).
+  A device-bound, revocable session token is now minted and verified here
+  rather than in a downstream consumer, so every surface (dashboard, CLI, and
+  a future messaging door) can present the same credential instead of each
+  asserting its own idea of who the human is. capauth already owns device
+  pairing, so the session belongs beside it.
+
+### Fixed
+
+- **Missing `approved` key read as approved.** The lifted session verifier
+  treated an absent `approved` field as if the device had been approved, so a
+  record that never went through approval could still verify. It now fails
+  closed, pinned by a regression test.
+
+### Added
+
 - **One-shot canonical-subject store migration** (`capauth.pairing.canonicalize`,
   driven by `scripts/migrate_canonical_subjects.py`). Rewrites pre-existing
   device records and capability tokens onto the canonical fqid grammar from

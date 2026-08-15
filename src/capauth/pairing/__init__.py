@@ -34,7 +34,30 @@ from .canonicalize import (
     format_rewrite_plan,
     scan_canonical_rewrite,
 )
+# OperatorAuthError lives in capauth.exceptions (the shared exception
+# hierarchy) but is re-exported here too, so `from capauth.pairing import
+# OperatorAuthError` works next to the mint/verify functions it belongs with.
+from ..exceptions import OperatorAuthError
 from .kernel import PairingError, approve, enroll_device, list_devices, revoke
+from .operator_session import (
+    OPERATOR_DEVICES_PATH_ENV,
+    DeviceStore,
+    OperatorSession,
+    approve_device,
+    consume_challenge,
+    default_device_store_path,
+    device_fingerprint,
+    is_device_approved,
+    is_device_revoked,
+    is_session_revoked,
+    issue_challenge,
+    mint_operator_session,
+    revoke_device,
+    revoke_session,
+    unrevoke_device,
+    verify_device_signature,
+    verify_operator_session,
+)
 from .records import (
     MODE_SEVERITY,
     DeviceRecord,
@@ -84,4 +107,23 @@ __all__ = [
     "scan_canonical_rewrite",
     "format_rewrite_plan",
     "apply_canonical_rewrite",
+    # operator session (Unified Consent Plane Phase 1: one operator identity)
+    "OperatorAuthError",
+    "OperatorSession",
+    "mint_operator_session",
+    "verify_operator_session",
+    "approve_device",
+    "is_device_approved",
+    "revoke_device",
+    "unrevoke_device",
+    "is_device_revoked",
+    "revoke_session",
+    "is_session_revoked",
+    "device_fingerprint",
+    "issue_challenge",
+    "consume_challenge",
+    "verify_device_signature",
+    "DeviceStore",
+    "default_device_store_path",
+    "OPERATOR_DEVICES_PATH_ENV",
 ]
