@@ -34,6 +34,7 @@ from .canonicalize import (
     format_rewrite_plan,
     scan_canonical_rewrite,
 )
+
 # OperatorAuthError lives in capauth.exceptions (the shared exception
 # hierarchy) but is re-exported here too, so `from capauth.pairing import
 # OperatorAuthError` works next to the mint/verify functions it belongs with.
