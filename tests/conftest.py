@@ -91,7 +91,9 @@ def enrolled_attested_credentials(device_pubkey: str, subject: str) -> tuple[str
     from capauth.pairing.store import fingerprint_for
 
     backend = get_backend()
-    op_bundle = backend.generate_keypair(TEST_NAME, TEST_EMAIL, TEST_PASSPHRASE, _Algorithm.ED25519)
+    op_bundle = backend.generate_keypair(
+        TEST_NAME, TEST_EMAIL, TEST_PASSPHRASE, _Algorithm.ED25519
+    )
     device_fingerprint = fingerprint_for(device_pubkey)
     attestation = backend.sign(
         attested_challenge(device_fingerprint, subject), op_bundle.private_armor, TEST_PASSPHRASE

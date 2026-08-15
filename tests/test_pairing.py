@@ -31,14 +31,12 @@ from capauth.pairing import (
     PairingError,
     PairingStore,
     approve,
-    attested_challenge,
     enroll_device,
     fingerprint_for,
     list_devices,
     mode_satisfies,
     open_window,
     revoke,
-    verified_challenge,
 )
 
 from .conftest import enrolled_attested_credentials, enrolled_verified_credentials
@@ -193,6 +191,182 @@ def test_enroll_defaults_subject_to_fingerprint(tmp_path):
     enr = enroll_device("some-key", ["s"], mode="tofu", base_dir=tmp_path)
     assert enr.fingerprint == fingerprint_for("some-key")
     assert enr.subject == f"device:{enr.fingerprint.lower()}"
+
+
+# --------------------------------------------------------------------------
+# enrollment proof validation (card N10, 09a6d6f3): enrollment mode used to be
+# caller-asserted with neither ``proof`` (verified) nor ``attestation``
+# (attested) ever checked, so decide() gated its most sensitive capabilities
+# (agentrun.execute, change.deploy, skcode.dispatch: VERIFIED-only) on a claim
+# nobody validated. enroll_device now checks a real signature over a
+# domain-separated, fingerprint+subject-bound challenge before the mode is
+# accepted; tofu is untouched (it needs none by design).
+# --------------------------------------------------------------------------
+
+
+def test_enroll_device_refuses_verified_with_no_proof(tmp_path):
+    pubkey, _proof = enrolled_verified_credentials("nia@chef.skworld.io")
+    with pytest.raises(PairingError, match="verified enrollment requires"):
+        enroll_device(
+            pubkey, ["s"], mode="verified", base_dir=tmp_path, subject="nia@chef.skworld.io"
+        )
+    assert list_devices(base_dir=tmp_path) == []
+
+
+def test_enroll_device_refuses_verified_with_garbage_proof(tmp_path):
+    pubkey, _proof = enrolled_verified_credentials("nia@chef.skworld.io")
+    with pytest.raises(PairingError, match="verified enrollment requires"):
+        enroll_device(
+            pubkey,
+            ["s"],
+            mode="verified",
+            base_dir=tmp_path,
+            subject="nia@chef.skworld.io",
+            proof="not-a-real-signature",
+        )
+
+
+def test_enroll_device_refuses_verified_signed_by_a_different_key(tmp_path):
+    # A signature that IS real, just not made by the presented pubkey's OWN
+    # private key: proves possession of a DIFFERENT key, not this device's.
+    pubkey, _own_proof = enrolled_verified_credentials("nia@chef.skworld.io")
+    _other_pubkey, other_key_proof = enrolled_verified_credentials("nia@chef.skworld.io")
+    with pytest.raises(PairingError, match="verified enrollment requires"):
+        enroll_device(
+            pubkey,
+            ["s"],
+            mode="verified",
+            base_dir=tmp_path,
+            subject="nia@chef.skworld.io",
+            proof=other_key_proof,
+        )
+
+
+def test_enroll_device_refuses_verified_proof_bound_to_a_different_subject(tmp_path):
+    # A genuinely valid self-signature by the RIGHT key -- just over the WRONG
+    # identity binding. Proves key possession, but not possession bound to the
+    # subject actually being claimed here.
+    pubkey, proof_for_someone_else = enrolled_verified_credentials("someone-else@chef.skworld.io")
+    with pytest.raises(PairingError, match="verified enrollment requires"):
+        enroll_device(
+            pubkey,
+            ["s"],
+            mode="verified",
+            base_dir=tmp_path,
+            subject="nia@chef.skworld.io",
+            proof=proof_for_someone_else,
+        )
+
+
+def test_enroll_device_accepts_verified_with_a_real_matching_proof(tmp_path):
+    pubkey, proof = enrolled_verified_credentials("nia@chef.skworld.io")
+    enr = enroll_device(
+        pubkey,
+        ["s"],
+        mode="verified",
+        base_dir=tmp_path,
+        subject="nia@chef.skworld.io",
+        proof=proof,
+    )
+    assert enr.mode == EnrollmentMode.VERIFIED
+
+
+def test_enroll_device_refuses_attested_with_no_evidence(tmp_path):
+    with pytest.raises(PairingError, match="attested enrollment requires"):
+        enroll_device(
+            "some-device-key",
+            ["s"],
+            mode="attested",
+            base_dir=tmp_path,
+            subject="omar@chef.skworld.io",
+        )
+
+
+def test_enroll_device_refuses_attested_missing_operator_pubkey(tmp_path):
+    # attestation present, but no operator_pubkey to verify it against.
+    _op_pubkey, attestation = enrolled_attested_credentials(
+        "some-device-key", "omar@chef.skworld.io"
+    )
+    with pytest.raises(PairingError, match="attested enrollment requires"):
+        enroll_device(
+            "some-device-key",
+            ["s"],
+            mode="attested",
+            base_dir=tmp_path,
+            subject="omar@chef.skworld.io",
+            attestation=attestation,
+        )
+
+
+def test_enroll_device_refuses_attested_signed_by_a_different_operator(tmp_path):
+    # attestation is real, just made by a DIFFERENT operator than the one
+    # operator_pubkey claims: not vouched for by the key it names.
+    _real_op_pubkey, real_attestation = enrolled_attested_credentials(
+        "some-device-key", "omar@chef.skworld.io"
+    )
+    imposter_op_pubkey, _imposter_attestation = enrolled_attested_credentials(
+        "some-device-key", "omar@chef.skworld.io"
+    )
+    with pytest.raises(PairingError, match="attested enrollment requires"):
+        enroll_device(
+            "some-device-key",
+            ["s"],
+            mode="attested",
+            base_dir=tmp_path,
+            subject="omar@chef.skworld.io",
+            operator_pubkey=imposter_op_pubkey,
+            attestation=real_attestation,
+        )
+
+
+def test_enroll_device_accepts_attested_with_a_real_matching_attestation(tmp_path):
+    operator_pubkey, attestation = enrolled_attested_credentials(
+        "some-device-key", "omar@chef.skworld.io"
+    )
+    enr = enroll_device(
+        "some-device-key",
+        ["s"],
+        mode="attested",
+        base_dir=tmp_path,
+        subject="omar@chef.skworld.io",
+        operator_pubkey=operator_pubkey,
+        attestation=attestation,
+    )
+    assert enr.mode == EnrollmentMode.ATTESTED
+
+
+def test_enroll_device_tofu_needs_no_proof(tmp_path):
+    # tofu is untouched: pin-on-first-use requires nothing upfront by design.
+    enr = enroll_device(
+        "bare-key", ["s"], mode="tofu", base_dir=tmp_path, subject="tofu-guy@chef.skworld.io"
+    )
+    assert enr.mode == EnrollmentMode.TOFU
+
+
+def test_enroll_device_refuses_a_forged_verified_claim_carrying_only_attested_evidence(tmp_path):
+    # The exact attack the card's threat model describes: a caller (a
+    # prompt-injected agent, in the fleet scenario) holds only ATTESTED-
+    # strength evidence -- an operator vouching for it -- but claims
+    # mode="verified" hoping the stronger label rides through unchecked, as it
+    # used to. verified requires a SELF-signature by the device's OWN key over
+    # 'proof'; attested-shaped evidence (operator_pubkey + attestation) is not
+    # that, and must not satisfy it under any label.
+    device_pubkey = "phone-key-forged"
+    operator_pubkey, attestation = enrolled_attested_credentials(
+        device_pubkey, "mallory@chef.skworld.io"
+    )
+    with pytest.raises(PairingError, match="verified enrollment requires"):
+        enroll_device(
+            device_pubkey,
+            ["agentrun.execute", "change.deploy", "skcode.dispatch"],
+            mode="verified",
+            base_dir=tmp_path,
+            subject="mallory@chef.skworld.io",
+            operator_pubkey=operator_pubkey,
+            attestation=attestation,
+        )
+    # nothing landed: the forged verified claim never became a DeviceRecord
+    assert list_devices(base_dir=tmp_path) == []
 
 
 # --------------------------------------------------------------------------
@@ -429,7 +603,9 @@ def test_list_devices_filters_by_subject(tmp_path):
         "ka", ["s"], mode="tofu", base_dir=tmp_path, subject="alice@chef.skworld.io"
     )
     e2 = enroll_device("kb", ["s"], mode="tofu", base_dir=tmp_path, subject="bob@chef.skworld.io")
-    kc_operator_pubkey, kc_attestation = enrolled_attested_credentials("kc", "alice@chef.skworld.io")
+    kc_operator_pubkey, kc_attestation = enrolled_attested_credentials(
+        "kc", "alice@chef.skworld.io"
+    )
     e3 = enroll_device(
         "kc",
         ["s"],

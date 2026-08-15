@@ -82,7 +82,9 @@ def _mint_operator_credential(mode: "EnrollmentMode | str", subject: str) -> tup
 
     backend = get_backend()
     passphrase = secrets.token_hex(16)
-    bundle = backend.generate_keypair(_MINT_UID_NAME, _MINT_UID_EMAIL, passphrase, Algorithm.ED25519)
+    bundle = backend.generate_keypair(
+        _MINT_UID_NAME, _MINT_UID_EMAIL, passphrase, Algorithm.ED25519
+    )
 
     # Mirrors enroll_device's own subject resolution for a non-bare-fingerprint
     # string (the only shape provision_subject's callers ever pass): strip +

@@ -67,7 +67,9 @@ def attested_challenge(fingerprint: str, subject: str) -> bytes:
     return f"{_ATTESTED_CHALLENGE_DOMAIN}:{fingerprint}:{subject}".encode("utf-8")
 
 
-def _proof_verifies(pubkey_armor: Optional[str], signature_armor: Optional[str], challenge: bytes) -> bool:
+def _proof_verifies(
+    pubkey_armor: Optional[str], signature_armor: Optional[str], challenge: bytes
+) -> bool:
     """Fail-closed signature check: True only for a real, matching signature.
 
     Any failure mode -- missing key, missing signature, unparseable armor, a

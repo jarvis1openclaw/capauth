@@ -6,6 +6,7 @@ import pytest
 
 from capauth import provision_subject
 from capauth.authz import decide
+from capauth.pairing import PairingError, list_devices
 
 # ``decide`` requires the granting token to carry a verifying signature, so
 # tokens here are issued SIGNED against the hermetic gpg stub (see conftest).
@@ -55,3 +56,55 @@ def test_provision_returns_ids(tmp_path):
     out = provision_subject("op@chef.skworld.io", sign=True, base_dir=tmp_path)
     assert out["device_id"] and out["token_id"]
     assert out["scopes"] == ["skchat.send", "skchat.inbox", "skchat.prekey"]
+
+
+# --------------------------------------------------------------------------- #
+# card N10 (09a6d6f3), item 4: provision_subject used to pass ``pubkey or
+# subject`` straight to enroll_device, so with no real device key to hand the
+# bare SUBJECT STRING stood in as if it were public key material. Now that
+# enroll_device actually validates proof for verified/attested (this same
+# card), that placeholder could never verify anyway; provision_subject mints
+# a real, throwaway keypair and proves it instead.
+# --------------------------------------------------------------------------- #
+
+
+def test_provision_mints_real_key_material_not_the_subject_string(tmp_path):
+    base = tmp_path / "home"
+    out = provision_subject("nadia@chef.skworld.io", mode="verified", sign=True, base_dir=base)
+
+    devices = list_devices(out["subject"], base_dir=base)
+    assert len(devices) == 1
+    pubkey = devices[0].pubkey
+    # the old defect: pubkey == the subject string, standing in as "key material"
+    assert pubkey != "nadia@chef.skworld.io"
+    assert "BEGIN PGP PUBLIC KEY BLOCK" in pubkey
+
+
+def test_provision_attested_also_mints_real_key_material(tmp_path):
+    base = tmp_path / "home"
+    out = provision_subject("keiko@chef.skworld.io", mode="attested", sign=True, base_dir=base)
+
+    devices = list_devices(out["subject"], base_dir=base)
+    assert len(devices) == 1
+    assert devices[0].pubkey != "keiko@chef.skworld.io"
+    assert "BEGIN PGP PUBLIC KEY BLOCK" in devices[0].pubkey
+    # attested still requires proof to have actually checked out (this is
+    # only reachable at all because it did): the mode landed as claimed.
+    assert devices[0].mode.value == "attested"
+
+
+def test_provision_with_a_caller_supplied_pubkey_still_requires_real_proof(tmp_path):
+    # When the caller DOES pass a real device pubkey, provision_subject no
+    # longer auto-mints on its behalf (that path is only for "no pubkey
+    # given"); an unproven verified claim is refused exactly as a direct
+    # enroll_device call would refuse it.
+    base = tmp_path / "home"
+    with pytest.raises(PairingError, match="verified enrollment requires"):
+        provision_subject(
+            "priya@chef.skworld.io",
+            mode="verified",
+            pubkey="-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----",
+            sign=True,
+            base_dir=base,
+        )
+    assert list_devices("priya@chef.skworld.io", base_dir=base) == []
