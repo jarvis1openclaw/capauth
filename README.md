@@ -115,7 +115,6 @@ capauth profile show                          # display your identity
 capauth profile verify                        # verify the profile's PGP signature integrity
 capauth export-pubkey -o chef.pub.asc         # share this with peers
 
-capauth did generate --tier key               # Tier 1: self-contained did:key
 capauth verify --pubkey peer.pub.asc          # challenge-response round-trip (self-test/demo)
 capauth login https://forgejo.local           # passwordless PGP login to a service
 ```
@@ -131,7 +130,7 @@ all Syncthing mesh nodes so every host shares one keypair.
 | **Sovereign profile** | A self-hosted, PGP-rooted identity at `~/.capauth/` — yours alone (`capauth init`, `profile show`) |
 | **Challenge-response** | Prove identity by signing a random nonce; verifiable offline by anyone with your public key (`capauth verify`, `identity.py`) |
 | **Pluggable crypto** | Two backends — `pgpy` (pure-Python default) and `gnupg` (system keyring / hardware tokens) |
-| **DID (three tiers)** | W3C DID documents: `did:key` (zero-infra), `did:web` mesh (Tailscale-private), `did:web` public (skworld.io) (`capauth did generate`) |
+| **DID (three tiers)** | W3C DID documents: `did:key` (zero-infra), `did:web` mesh (Tailscale-private), `did:web` public (skworld.io). **Library / MCP surface, not a CLI command:** `capauth.did.DIDDocumentGenerator`, or skcapstone's `did_show` / `did_publish` MCP tools |
 | **Agent-identity resolver** | The single canonical `resolve_agent_identity()` — dual URI (`capauth:<a>@skworld.io` + FQID `<a>@<op>.<realm>`) that every SK package delegates to |
 | **Verification service** | A FastAPI service that turns a signed challenge into OIDC claims — passwordless PGP login for any OIDC app (`capauth-service`) |
 | **Peer mesh** | Discover and verify sovereign peers over mDNS, shared filesystem, and Syncthing — no servers (`capauth mesh`, `discover`, `peers`) |
@@ -174,9 +173,15 @@ capauth profile show | verify                 # display / verify signature integ
 capauth export-pubkey [-o file.asc]          # export ASCII-armored public key
 capauth sync                                  # replicate ~/.capauth/ across Syncthing mesh
 
-# Verification & DID
+# Verification
 capauth verify --pubkey peer.pub.asc         # challenge-response round-trip
-capauth did generate --tier key|mesh|public  # W3C DID at the chosen privacy tier
+capauth doctor                               # self-report
+capauth pqc-report                           # live PQC posture per surface
+
+# DID -- NOT a CLI command. There is no `capauth did` group. Use the library:
+#   from capauth.did import DIDDocumentGenerator, DIDTier
+#   DIDDocumentGenerator.from_profile().generate(DIDTier.KEY)
+# or skcapstone's MCP tools: did_show / did_publish / did_identity_card
 
 # Auth & integration
 capauth login <service_url> [--no-claims]    # passwordless PGP login (caches OIDC token)
