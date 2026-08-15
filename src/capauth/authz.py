@@ -49,6 +49,24 @@ subject plus the request:
    that flag, because it may be tampered rather than merely legacy. See
    :func:`_legacy_unsigned_grace_deadline`.
 4. The **requested capability** and **resource**.
+5. **The subject's identity class**, from :mod:`capauth.identity_class`
+   (``operator`` / ``agent`` / ``node`` / ``edge-device``). Facts 1-3 all answer
+   "does this subject hold the grant today?". This one answers "is this subject
+   the KIND of thing that may hold it at all?", and it is a CEILING rather than
+   a grant: a ``node`` may never exercise ``Capability.ALL``,
+   ``Capability.TOKEN_ISSUE`` or ``Capability.IDENTITY_SIGN``, whatever token
+   turns up under its subject in the replicated store.
+
+   This check runs FIRST, before the capability rule, the enrollment mode, and
+   any token read. That ordering is the point: a ceiling a token could raise is
+   not a ceiling. A node-class subject holding a valid, signed
+   ``Capability.ALL`` token is still denied ``token:issue``, because the request
+   is refused before the token store is consulted.
+
+   The class layer is opt-in per subject. A subject with no stored class
+   assignment resolves to ``None`` and the decision path is EXACTLY what it was
+   before this fact existed. An assignment that cannot be resolved (unreadable
+   store, unknown class name) denies, like every other uncertainty here.
 
 This kernel does NOT decide whether an issuer is *authorized* to grant a given
 capability. A token is pinned to the issuer it declares, but any key in the
@@ -108,6 +126,12 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from .exceptions import SubjectNamingError
+from .identity_class import (
+    DEFAULT_CLASSES,
+    IdentityClass,
+    IdentityClassError,
+    resolve_identity_class,
+)
 from .pairing import (
     DeviceRecord,
     EnrollmentMode,
@@ -610,6 +634,33 @@ def _subject_tokens(subject: str, home: Path) -> list[SignedToken]:
     return [t for t in list_tokens(home) if (t.payload.subject or "").strip().lower() in wanted]
 
 
+def _class_ceiling_denial(identity_class: IdentityClass, capability: str) -> Optional[str]:
+    """The deny reason a subject's identity class imposes on ``capability``, if any.
+
+    Two shapes, kept apart because they are different operator problems: a
+    capability this class may NEVER exercise (someone tried to give a machine an
+    operator power), versus one that is merely outside this class's allowlist (a
+    new capability nobody has decided about yet). Forbidden is checked first so
+    it wins even when a class lists a capability in both places.
+
+    Args:
+        identity_class: The subject's resolved class.
+        capability: The requested capability string.
+
+    Returns:
+        str or None: A stable deny reason, or ``None`` when the class admits the
+        capability. Operators grep these strings, so they must not drift.
+    """
+    if identity_class.forbids(capability):
+        return f"identity class {identity_class.name.value!r} forbids capability {capability!r}"
+    if not identity_class.permits(capability):
+        return (
+            f"identity class {identity_class.name.value!r} does not permit "
+            f"capability {capability!r}"
+        )
+    return None
+
+
 def decide(
     subject: str,
     capability: str,
@@ -618,6 +669,7 @@ def decide(
     *,
     base_dir: Optional[Path] = None,
     rules: Optional[dict[str, CapabilityRule]] = None,
+    classes: Optional[dict[str, IdentityClass]] = None,
 ) -> Decision:
     """Decide whether ``subject`` may exercise ``capability`` on ``resource``.
 
@@ -639,6 +691,13 @@ def decide(
     :func:`_legacy_unsigned_grace_deadline`. That exception never applies to a
     signature that was attempted and failed to verify.
 
+    The subject's identity class (:mod:`capauth.identity_class`) is a CEILING
+    applied before all of that: a ``node``-class subject is denied
+    ``token:issue`` even holding a valid, signed ``Capability.ALL`` token, with
+    the stable reason ``"identity class 'node' forbids capability 'token:issue'"``.
+    A subject with no class assignment is unaffected and decides exactly as it
+    did before the class layer existed.
+
     Args:
         subject: The already-authenticated subject identity (e.g. an fqid).
         capability: The requested capability (e.g. ``"skchat.send"``).
@@ -651,12 +710,42 @@ def decide(
             tokens (defaults to ``~/.skcapstone``). Tests inject ``tmp_path``.
         rules: Override the capability rule table (defaults to
             :data:`DEFAULT_RULES`, the seeded skchat rules).
+        classes: Override the identity-class table (defaults to
+            :data:`capauth.identity_class.DEFAULT_CLASSES`).
 
     Returns:
         Decision: ``allow`` + ``reason`` + ``obligations`` (>= the audit entry).
     """
     home = Path(base_dir).expanduser() if base_dir is not None else default_base_dir()
     rule_table = rules if rules is not None else DEFAULT_RULES
+    class_table = classes if classes is not None else DEFAULT_CLASSES
+
+    # 0. Identity-class ceiling -> fail closed, BEFORE any token or rule is read.
+    #
+    # Deliberately first. Every check below asks whether the subject holds the
+    # grant; this one asks whether the subject is the kind of identity that may
+    # hold it at all. Running it after the token read would make it a grant
+    # check like the others, and a stray Capability.ALL token in the replicated
+    # store would lift it. Subjects with no assignment resolve to None and skip
+    # this branch entirely, so their outcomes are byte-for-byte what they were
+    # before this layer existed.
+    try:
+        identity_class = resolve_identity_class(subject, base_dir=home, classes=class_table)
+    except IdentityClassError as exc:
+        # A ceiling was intended and we cannot read it. Denying is the only
+        # honest answer; the alternative rewards corrupting one file.
+        return _deny(
+            subject,
+            capability,
+            resource,
+            f"identity class assignment is unusable: {exc}",
+            context,
+        )
+
+    if identity_class is not None:
+        ceiling_denial = _class_ceiling_denial(identity_class, capability)
+        if ceiling_denial is not None:
+            return _deny(subject, capability, resource, ceiling_denial, context)
 
     # 1. Unknown capability -> fail closed.
     rule = rule_table.get(capability)
@@ -678,6 +767,21 @@ def decide(
             capability,
             resource,
             "unknown subject: no enrolled device",
+            context,
+        )
+
+    # 3a. The identity class's own enrollment floor -> fail closed. Checked
+    # alongside (not instead of) the capability's floor below: a class may raise
+    # the floor for everything a subject of that class does, never lower it.
+    if identity_class is not None and not mode_satisfies(mode, identity_class.minimum_mode):
+        return _deny(
+            subject,
+            capability,
+            resource,
+            (
+                f"identity class {identity_class.name.value!r} requires at least "
+                f"{identity_class.minimum_mode.value!r} enrollment, device is {mode.value!r}"
+            ),
             context,
         )
 
@@ -816,4 +920,9 @@ __all__ = [
     "CapabilityRule",
     "DEFAULT_RULES",
     "OBLIGATION_AUDIT",
+    # Re-exported: the identity-class ceiling is part of this PDP's contract
+    # now, so callers reasoning about a decision can reach it from one module.
+    "DEFAULT_CLASSES",
+    "IdentityClass",
+    "IdentityClassError",
 ]

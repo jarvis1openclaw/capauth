@@ -19,6 +19,14 @@ from .authz import (
     decide,
 )
 from .exceptions import OperatorAuthError, SubjectNamingError
+from .identity_class import (
+    DEFAULT_CLASSES,
+    IdentityClass,
+    IdentityClassError,
+    IdentityClassName,
+    assign_identity_class,
+    resolve_identity_class,
+)
 from .manifest import (
     DEFAULT_SIG_SUFFIX,
     ManifestSigningError,
@@ -116,6 +124,13 @@ __all__ = [
     "CapabilityRule",
     "DEFAULT_RULES",
     "OBLIGATION_AUDIT",
+    # identity classes (node-roles epic: the ceiling decide() applies first)
+    "IdentityClass",
+    "IdentityClassName",
+    "IdentityClassError",
+    "DEFAULT_CLASSES",
+    "assign_identity_class",
+    "resolve_identity_class",
     # pairing kernel (spine M2: enrollment modes + operator window)
     "enroll_device",
     "approve",
