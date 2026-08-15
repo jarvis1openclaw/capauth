@@ -38,7 +38,15 @@ from .canonicalize import (
     format_rewrite_plan,
     scan_canonical_rewrite,
 )
-from .kernel import PairingError, approve, enroll_device, list_devices, revoke
+from .kernel import (
+    PairingError,
+    approve,
+    attested_challenge,
+    enroll_device,
+    list_devices,
+    revoke,
+    verified_challenge,
+)
 from .operator_session import (
     OPERATOR_DEVICES_PATH_ENV,
     DeviceStore,
@@ -57,14 +65,6 @@ from .operator_session import (
     unrevoke_device,
     verify_device_signature,
     verify_operator_session,
-from .kernel import (
-    PairingError,
-    approve,
-    attested_challenge,
-    enroll_device,
-    list_devices,
-    revoke,
-    verified_challenge,
 )
 from .records import (
     MODE_SEVERITY,
