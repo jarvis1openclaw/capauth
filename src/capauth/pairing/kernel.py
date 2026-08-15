@@ -36,6 +36,57 @@ class PairingError(CapAuthError):
     """Raised when a pairing operation is refused (bad window, unknown id, ...)."""
 
 
+#: Domain-separated challenge prefixes for the two proof-bearing modes (card
+#: N10, 09a6d6f3). Distinct prefixes so a signature made for one mode/purpose
+#: can never be replayed as proof for the other (an attested attestation
+#: cannot double as a verified self-proof, and vice versa).
+_VERIFIED_CHALLENGE_DOMAIN = "capauth-pairing-enrollment-verified-v1"
+_ATTESTED_CHALLENGE_DOMAIN = "capauth-pairing-enrollment-attested-v1"
+
+
+def verified_challenge(fingerprint: str, subject: str) -> bytes:
+    """The exact bytes a ``verified`` enrollment's ``proof`` must be a signature over.
+
+    Binds the claim to BOTH the presented device fingerprint and the resolved
+    subject, so a self-signature proves possession of the device's own private
+    key over precisely the identity this enrollment claims -- not merely "a
+    signature exists somewhere." Callers building a real ``proof`` (this
+    package's own :func:`enroll_device`, or a future front door) sign exactly
+    this over the device's private key.
+    """
+    return f"{_VERIFIED_CHALLENGE_DOMAIN}:{fingerprint}:{subject}".encode("utf-8")
+
+
+def attested_challenge(fingerprint: str, subject: str) -> bytes:
+    """The exact bytes an ``attested`` enrollment's ``attestation`` must sign.
+
+    Same binding as :func:`verified_challenge` (fingerprint + subject), signed
+    instead by the VOUCHING OPERATOR's key (``operator_pubkey``), proving the
+    operator, not the device, attests to this specific device/identity pair.
+    """
+    return f"{_ATTESTED_CHALLENGE_DOMAIN}:{fingerprint}:{subject}".encode("utf-8")
+
+
+def _proof_verifies(pubkey_armor: Optional[str], signature_armor: Optional[str], challenge: bytes) -> bool:
+    """Fail-closed signature check: True only for a real, matching signature.
+
+    Any failure mode -- missing key, missing signature, unparseable armor, a
+    signature over different bytes, a signature from a different key, a crypto
+    backend that is unavailable in this interpreter -- returns False rather
+    than raising, so a caller who cannot produce a real proof is refused with
+    the same "invalid proof" reason as a caller who forged one, never with an
+    unrelated crash.
+    """
+    if not pubkey_armor or not signature_armor:
+        return False
+    try:
+        from capauth.crypto import get_backend
+
+        return bool(get_backend().verify(challenge, signature_armor, pubkey_armor))
+    except Exception:  # noqa: BLE001 -- any backend/parse failure means "not proven"
+        return False
+
+
 #: A bare device fingerprint (no ``device:`` prefix, no ``@``): the exact shape
 #: :func:`fingerprint_for` returns and the one this function itself used to
 #: store verbatim as the default subject. It is also what
@@ -172,10 +223,27 @@ def enroll_device(
     and a successful enroll consumes one window accept. Without a window the
     enroll is ungated (the tailnet-local path, unchanged behavior).
 
-    Mode-specific evidence rides the optional kwargs:
-    ``operator_pubkey`` + ``attestation`` for ``attested`` (guest_accept Mode B),
-    ``proof`` for a ``verified`` self-signed assertion (join_routes). ``tofu``
-    needs none.
+    Mode-specific evidence rides the optional kwargs, and is now (card N10,
+    09a6d6f3) ACTUALLY CHECKED rather than merely stored:
+
+    * ``verified`` requires ``proof``: an ASCII-armored PGP signature, made by
+      the device's own ``pubkey``, over :func:`verified_challenge`'s bytes for
+      this enrollment's fingerprint + resolved subject. Proves the caller
+      possesses the device's private key, not merely that it asserts one.
+    * ``attested`` requires ``operator_pubkey`` + ``attestation``: a signature
+      made by ``operator_pubkey`` over :func:`attested_challenge`'s bytes for
+      the same fingerprint + subject. Proves a vouching operator, not the
+      device itself, attests to this specific device/identity pair.
+    * ``tofu`` needs neither; pin-on-first-use requires no upfront proof by
+      design.
+
+    Missing or invalid evidence for ``verified``/``attested`` raises
+    :class:`PairingError` -- the enrollment is never persisted, so a caller
+    cannot land a claimed mode it did not actually prove. This is enforced
+    only at THIS call (new enrollments); it does not and cannot retroactively
+    touch a :class:`DeviceRecord` an earlier :func:`approve` already
+    persisted, since ``decide()`` reads only the stored ``mode`` field off
+    those, never re-checking proof after approval.
 
     Args:
         pubkey: The device's presented public key (ASCII-armored).
@@ -199,7 +267,10 @@ def enroll_device(
         Enrollment: The persisted pending enrollment.
 
     Raises:
-        PairingError: If the window gate refuses the attempt.
+        PairingError: If the window gate refuses the attempt, or if
+            ``mode="verified"``/``"attested"`` is claimed without the proof
+            that mode requires actually checking out (card N10, 09a6d6f3: the
+            mode used to be accepted on the caller's say-so alone).
         SubjectNamingError: If ``subject`` (or the fingerprint it defaults
             to) does not conform to the canonical fqid grammar even after
             alias translation.
@@ -219,6 +290,31 @@ def enroll_device(
 
     fingerprint = fingerprint_for(pubkey)
     canonical = _resolve_subject(subject, fingerprint)
+    identity_for_proof = canonical or fingerprint or ""
+
+    # Card N10 (09a6d6f3): mode was caller-asserted and its proof was never
+    # validated, so decide() gated agentrun.execute / change.deploy /
+    # skcode.dispatch (VERIFIED-only, "arbitrary command execution AS the
+    # subject") on a claim nobody checked. Enforced HERE, at the one entry
+    # point that creates a new Enrollment, so it cannot retroactively touch a
+    # DeviceRecord an earlier approve() already persisted (those are read by
+    # stored mode only, never re-proven).
+    if resolved_mode is EnrollmentMode.VERIFIED:
+        if not _proof_verifies(pubkey, proof, verified_challenge(fingerprint, identity_for_proof)):
+            raise PairingError(
+                "verified enrollment requires 'proof': a signature by the device's "
+                "own pubkey over the fingerprint+subject challenge, proving key "
+                "possession (card N10); none was presented or it did not verify"
+            )
+    elif resolved_mode is EnrollmentMode.ATTESTED:
+        challenge = attested_challenge(fingerprint, identity_for_proof)
+        if not _proof_verifies(operator_pubkey, attestation, challenge):
+            raise PairingError(
+                "attested enrollment requires 'operator_pubkey' + 'attestation': a "
+                "signature by the vouching operator's key over the fingerprint+"
+                "subject challenge (card N10); none was presented or it did not verify"
+            )
+
     enrollment = Enrollment(
         pubkey=pubkey,
         fingerprint=fingerprint,
@@ -359,4 +455,6 @@ __all__ = [
     "approve",
     "revoke",
     "list_devices",
+    "verified_challenge",
+    "attested_challenge",
 ]

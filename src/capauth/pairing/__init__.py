@@ -57,6 +57,14 @@ from .operator_session import (
     unrevoke_device,
     verify_device_signature,
     verify_operator_session,
+from .kernel import (
+    PairingError,
+    approve,
+    attested_challenge,
+    enroll_device,
+    list_devices,
+    revoke,
+    verified_challenge,
 )
 from .records import (
     MODE_SEVERITY,
@@ -83,6 +91,8 @@ __all__ = [
     "list_devices",
     "open_window",
     "PairingError",
+    "verified_challenge",
+    "attested_challenge",
     # records + modes
     "EnrollmentMode",
     "Enrollment",
