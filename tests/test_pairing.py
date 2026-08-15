@@ -31,13 +31,17 @@ from capauth.pairing import (
     PairingError,
     PairingStore,
     approve,
+    attested_challenge,
     enroll_device,
     fingerprint_for,
     list_devices,
     mode_satisfies,
     open_window,
     revoke,
+    verified_challenge,
 )
+
+from .conftest import enrolled_attested_credentials, enrolled_verified_credentials
 
 # A representative v1 peer record, exactly as the shipped registry writes it
 # (fields copied from ~/.skcapstone/peers/architect.json). Used to prove the
@@ -122,23 +126,31 @@ def test_device_record_satisfies_honors_revocation():
 
 
 @pytest.mark.parametrize(
-    "mode,extra",
-    [
-        (EnrollmentMode.VERIFIED, {"proof": "self-signed-assertion-blob"}),
-        (
-            EnrollmentMode.ATTESTED,
-            {"operator_id": "chef@skworld.io", "operator_pubkey": "OP", "attestation": "sig"},
-        ),
-        (EnrollmentMode.TOFU, {}),
-    ],
+    "mode",
+    [EnrollmentMode.VERIFIED, EnrollmentMode.ATTESTED, EnrollmentMode.TOFU],
 )
-def test_enroll_and_approve_happy_path(tmp_path, mode, extra):
+def test_enroll_and_approve_happy_path(tmp_path, mode):
     # "phone@chef.skworld" is the missing-TLD legacy shape agent_identity has
     # shipped as its fqid field (IDENTITY_NAMING_STANDARD.md sec 2.5); enroll_device
     # normalizes it to the canonical "phone@chef.skworld.io" (card N3), it is
-    # not refused.
+    # not refused. Proof (card N10) is bound to that CANONICAL form, since
+    # that is what enroll_device actually verifies against.
+    canonical_subject = "phone@chef.skworld.io"
+    pubkey = "device-pubkey-material"
+    extra: dict = {}
+    if mode is EnrollmentMode.VERIFIED:
+        pubkey, proof = enrolled_verified_credentials(canonical_subject)
+        extra = {"proof": proof}
+    elif mode is EnrollmentMode.ATTESTED:
+        operator_pubkey, attestation = enrolled_attested_credentials(pubkey, canonical_subject)
+        extra = {
+            "operator_id": "chef@skworld.io",
+            "operator_pubkey": operator_pubkey,
+            "attestation": attestation,
+        }
+
     enr = enroll_device(
-        "device-pubkey-material",
+        pubkey,
         ["skchat.send", "skchat.inbox"],
         mode=mode,
         base_dir=tmp_path,
@@ -376,8 +388,14 @@ def test_window_rate_limit(tmp_path):
 
 
 def test_revoke_is_a_state_transition(tmp_path):
+    pubkey, proof = enrolled_verified_credentials("laptop@chef.skworld.io")
     enr = enroll_device(
-        "k", ["skchat.send"], mode="verified", base_dir=tmp_path, subject="laptop@chef.skworld.io"
+        pubkey,
+        ["skchat.send"],
+        mode="verified",
+        base_dir=tmp_path,
+        subject="laptop@chef.skworld.io",
+        proof=proof,
     )
     dev = approve(enr.enrollment_id, "chef", base_dir=tmp_path)
     assert not dev.revoked
@@ -411,8 +429,15 @@ def test_list_devices_filters_by_subject(tmp_path):
         "ka", ["s"], mode="tofu", base_dir=tmp_path, subject="alice@chef.skworld.io"
     )
     e2 = enroll_device("kb", ["s"], mode="tofu", base_dir=tmp_path, subject="bob@chef.skworld.io")
+    kc_operator_pubkey, kc_attestation = enrolled_attested_credentials("kc", "alice@chef.skworld.io")
     e3 = enroll_device(
-        "kc", ["s"], mode="attested", base_dir=tmp_path, subject="alice@chef.skworld.io"
+        "kc",
+        ["s"],
+        mode="attested",
+        base_dir=tmp_path,
+        subject="alice@chef.skworld.io",
+        operator_pubkey=kc_operator_pubkey,
+        attestation=kc_attestation,
     )
     for e in (e1, e2, e3):
         approve(e.enrollment_id, "chef", base_dir=tmp_path)
@@ -439,13 +464,22 @@ def test_sidecar_preserves_existing_v1_peer_shape(tmp_path):
     original = copy.deepcopy(V1_PEER)
     peer_file.write_text(json.dumps(original, indent=2), encoding="utf-8")
 
-    # enroll + approve a device for this existing subject (matched by identity)
+    # enroll + approve a device for this existing subject (matched by identity).
+    # "capauth:architect@skworld.io" canonicalizes to "architect@skworld.io"
+    # (the capauth: prefix is stripped; "architect" is not in the two-name
+    # domain alias table, unlike lumina/opus); the attestation must be bound
+    # to THAT canonical form.
+    operator_pubkey, attestation = enrolled_attested_credentials(
+        "architect-device-key", "architect@skworld.io"
+    )
     enr = enroll_device(
         "architect-device-key",
         ["skchat.send"],
         mode="attested",
         base_dir=tmp_path,
         subject="capauth:architect@skworld.io",
+        operator_pubkey=operator_pubkey,
+        attestation=attestation,
     )
     dev = approve(enr.enrollment_id, "chef@skworld.io", base_dir=tmp_path)
 
@@ -502,8 +536,14 @@ def test_sidecar_revocation_round_trips_on_existing_peer(tmp_path):
     peers.mkdir(parents=True)
     (peers / "architect.json").write_text(json.dumps(V1_PEER, indent=2), encoding="utf-8")
 
+    pubkey, proof = enrolled_verified_credentials("architect@skworld.io")
     enr = enroll_device(
-        "k", ["s"], mode="verified", base_dir=tmp_path, subject="capauth:architect@skworld.io"
+        pubkey,
+        ["s"],
+        mode="verified",
+        base_dir=tmp_path,
+        subject="capauth:architect@skworld.io",
+        proof=proof,
     )
     dev = approve(enr.enrollment_id, "chef", base_dir=tmp_path)
     revoke(dev.device_id, "compromised", base_dir=tmp_path)
@@ -519,8 +559,14 @@ def test_sidecar_revocation_round_trips_on_existing_peer(tmp_path):
 
 def test_multiple_devices_per_subject_coexist(tmp_path):
     # a subject pairs two distinct device keys; both persist under one peer file
+    phone_pubkey, phone_proof = enrolled_verified_credentials("alice@chef.skworld.io")
     e1 = enroll_device(
-        "phone-key", ["s"], mode="verified", base_dir=tmp_path, subject="alice@chef.skworld.io"
+        phone_pubkey,
+        ["s"],
+        mode="verified",
+        base_dir=tmp_path,
+        subject="alice@chef.skworld.io",
+        proof=phone_proof,
     )
     e2 = enroll_device(
         "laptop-key", ["s"], mode="tofu", base_dir=tmp_path, subject="alice@chef.skworld.io"
@@ -578,11 +624,13 @@ def test_device_findable_when_peer_file_identity_differs(tmp_path):
     (peers / "lumina.json").write_text(
         json.dumps({"name": "Lumina", "identity": "lumina@chef.skworld", "fingerprint": "AA"})
     )
+    pubkey, proof = enrolled_verified_credentials("lumina@chef.skworld.io")
     enr = enroll_device(
-        "lumina@chef.skworld.io",
+        pubkey,
         ["skchat.send"],
         mode="verified",
         subject="lumina@chef.skworld.io",
+        proof=proof,
         base_dir=base,
     )
     approve(enr.enrollment_id, "operator", base_dir=base)
