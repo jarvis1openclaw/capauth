@@ -8,6 +8,23 @@ All notable changes to `capauth` are documented here. The format is based on
 
 ### Added
 
+- **Identity classes: a structural ceiling over capability grants**
+  (`capauth.identity_class`, card `fc6500cb`). `IdentityClass` carries
+  `allowed_capabilities`, `forbidden_capabilities` and a minimum
+  `EnrollmentMode`, with four classes: `operator`, `agent`, `node`,
+  `edge-device`. The `node` class forbids `Capability.ALL` (`"*"`),
+  `Capability.TOKEN_ISSUE` and `Capability.IDENTITY_SIGN`, and allows inference
+  plus read scopes only: no operator secrets, no agent signing, no minting.
+  - `authz.decide` evaluates the class FIRST, before the capability rule, the
+    enrollment mode, and any token read, so a node-class subject holding a
+    valid, signed `Capability.ALL` token is still denied `token:issue`. A
+    ceiling a token can raise is not a ceiling.
+  - Assignment is stored (`<base_dir>/identity/classes.json`), never asserted by
+    the caller, via `assign_identity_class` / `resolve_identity_class`.
+  - Back-compatible: a subject with no class assignment skips every new branch
+    and decides exactly as before. An unusable assignment (corrupt file, unknown
+    class name) denies, and every new branch still emits the AUDIT obligation.
+
 - **`store` parameter on `issue_token` / `mint_audience_token` /
   `mint_agent_audience_token`** (default `True`). `store=False` mints a token
   without writing a file to `home/security/tokens`. An audience token is
