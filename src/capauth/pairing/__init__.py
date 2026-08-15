@@ -24,6 +24,10 @@ flag) is a deliberate later step and lives in those repos, not here.
 
 from __future__ import annotations
 
+# OperatorAuthError lives in capauth.exceptions (the shared exception
+# hierarchy) but is re-exported here too, so `from capauth.pairing import
+# OperatorAuthError` works next to the mint/verify functions it belongs with.
+from ..exceptions import OperatorAuthError
 from .canonicalize import (
     DeviceRewrite,
     RewritePlan,
@@ -34,11 +38,6 @@ from .canonicalize import (
     format_rewrite_plan,
     scan_canonical_rewrite,
 )
-
-# OperatorAuthError lives in capauth.exceptions (the shared exception
-# hierarchy) but is re-exported here too, so `from capauth.pairing import
-# OperatorAuthError` works next to the mint/verify functions it belongs with.
-from ..exceptions import OperatorAuthError
 from .kernel import PairingError, approve, enroll_device, list_devices, revoke
 from .operator_session import (
     OPERATOR_DEVICES_PATH_ENV,
