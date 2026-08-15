@@ -34,15 +34,32 @@ from pathlib import Path
 
 from capauth.authz import LEGACY_UNSIGNED_GRACE_ENV, decide
 from capauth.pairing import EnrollmentMode, approve, enroll_device
+from capauth.subject import canonical_subject
 from capauth.tokens import issue_token
+
+from .conftest import enrolled_verified_credentials
 
 SUBJECT = "alice@chef.skworld"
 PUBKEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----"
 CAPABILITY = "skchat.send"
 
+# ``enroll_device`` now validates proof for verified/attested (card N10,
+# 09a6d6f3), so this module's only enrollment mode (VERIFIED) needs a real
+# keypair + a real signature over the challenge, not the ``PUBKEY``
+# placeholder this file used before that landed. Enrollment here is
+# incidental setup for this module's actual subject (the legacy-unsigned-
+# TOKEN grace window, card f47e2558): the proof must bind to SUBJECT's
+# CANONICAL form (``enroll_device`` still normalizes the missing-TLD legacy
+# shape, card N3), not the legacy spelling this file otherwise exercises
+# throughout, so it is resolved once here rather than inlined per call.
+_CANONICAL_SUBJECT = canonical_subject(SUBJECT)
+
 
 def _enroll(base: Path, *, mode: EnrollmentMode = EnrollmentMode.VERIFIED) -> None:
-    enrollment = enroll_device(PUBKEY, [CAPABILITY], mode=mode, base_dir=base, subject=SUBJECT)
+    pubkey, proof = enrolled_verified_credentials(_CANONICAL_SUBJECT)
+    enrollment = enroll_device(
+        pubkey, [CAPABILITY], mode=mode, base_dir=base, subject=SUBJECT, proof=proof
+    )
     approve(enrollment.enrollment_id, "operator@chef.skworld", base_dir=base)
 
 

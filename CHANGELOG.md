@@ -6,6 +6,40 @@ All notable changes to `capauth` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **`enroll_device` accepted `verified` / `attested` as a caller-asserted claim,
+  never checked** (card N10 `09a6d6f3`). `Enrollment.proof` and
+  `Enrollment.attestation` were stored on the record but neither was ever
+  verified, so `decide()` gated its most sensitive capabilities
+  (`agentrun.execute`, `change.deploy`, `skcode.dispatch`, all VERIFIED-only)
+  on a mode nobody had proven. `enroll_device` now requires, before
+  persisting the `Enrollment`, at the two non-`tofu` modes:
+  - **`verified`**: `proof` must be a real signature by the presented
+    `pubkey`'s own private key over
+    `verified_challenge(fingerprint, subject)`, proving possession of that
+    key.
+  - **`attested`**: `operator_pubkey` + `attestation` must be a real
+    signature by that operator key over
+    `attested_challenge(fingerprint, subject)`, proving a vouching operator,
+    not the device itself, attests to this exact fingerprint/subject pair.
+  - Both challenges are domain-separated (distinct string prefixes) so a
+    genuine attestation can never be replayed as a verified proof under a
+    different claimed mode, and both are bound to the *canonical* subject, so
+    a proof made for one identity cannot be reused for another. `tofu` is
+    unaffected (needs no proof by design). Any failure (missing, garbage,
+    wrong-key, wrong-subject-binding, or evidence shaped for the other mode)
+    raises `PairingError` and nothing is persisted. Verification runs through
+    the existing `CryptoBackend.verify()`, fully in-memory.
+  - **`provision_subject`** (`capauth.provisioning`) no longer falls back to
+    `pubkey or subject`, which let the bare subject string stand in as if it
+    were key material. When no real device `pubkey` is given it now mints a
+    real throwaway Ed25519 keypair and self-proves it against the exact
+    challenge `enroll_device` re-derives, discarding the private half
+    immediately; when a real `pubkey` is given, new optional `proof` /
+    `operator_pubkey` / `attestation` kwargs pass through untouched rather
+    than being fabricated on the caller's behalf.
+
 ### Added
 
 - **`store` parameter on `issue_token` / `mint_audience_token` /
