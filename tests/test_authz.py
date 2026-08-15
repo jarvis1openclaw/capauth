@@ -32,7 +32,7 @@ from capauth.authz import (
 from capauth.pairing import EnrollmentMode, approve, enroll_device, revoke
 from capauth.tokens import issue_token
 
-SUBJECT = "alice@chef.skworld"
+SUBJECT = "alice@chef.skworld.io"
 PUBKEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----"
 
 # ``decide`` requires the granting token to carry a verifying signature, so every
@@ -331,7 +331,7 @@ def test_skgateway_infer_decision_end_to_end(tmp_path):
     assert allowed.allow is True
 
     # A fresh tofu-only subject cannot infer (attested floor).
-    tofu_subject = "carol@chef.skworld"
+    tofu_subject = "carol@chef.skworld.io"
     _enroll(tmp_path, mode=EnrollmentMode.TOFU, subject=tofu_subject, scopes=["skgateway.infer"])
     _issue(tmp_path, ["skgateway.infer"], subject=tofu_subject)
     denied = decide(tofu_subject, "skgateway.infer", base_dir=tmp_path)
@@ -347,7 +347,7 @@ def test_skgateway_admin_requires_verified(tmp_path):
     assert denied.allow is False
     assert "insufficient enrollment mode" in denied.reason
 
-    verified_subject = "dave@chef.skworld"
+    verified_subject = "dave@chef.skworld.io"
     _enroll(
         tmp_path,
         mode=EnrollmentMode.VERIFIED,
@@ -383,7 +383,7 @@ def test_skcode_inject_requires_verified(tmp_path):
     assert denied.allow is False
     assert "insufficient enrollment mode" in denied.reason
 
-    verified_subject = "erin@chef.skworld"
+    verified_subject = "erin@chef.skworld.io"
     _enroll(
         tmp_path, mode=EnrollmentMode.VERIFIED, subject=verified_subject, scopes=["skcode.inject"]
     )
@@ -396,7 +396,7 @@ def test_skcode_dispatch_requires_verified(tmp_path):
     """skcode.dispatch (spawn/RCE) decides through the same PDP path at the
     verified floor: a tofu device is denied, a verified device with a grant
     allows."""
-    tofu_subject = "frank@chef.skworld"
+    tofu_subject = "frank@chef.skworld.io"
     _enroll(tmp_path, mode=EnrollmentMode.TOFU, subject=tofu_subject, scopes=["skcode.dispatch"])
     _issue(tmp_path, ["skcode.dispatch"], subject=tofu_subject)
     denied = decide(tofu_subject, "skcode.dispatch", base_dir=tmp_path)

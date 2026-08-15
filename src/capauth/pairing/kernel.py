@@ -19,11 +19,13 @@ positional/keyword parameters above are untouched.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from capauth.exceptions import CapAuthError
+from capauth.exceptions import CapAuthError, SubjectNamingError
+from capauth.subject import canonical_subject
 
 from .records import DeviceRecord, Enrollment, EnrollmentMode
 from .store import PairingStore, fingerprint_for
@@ -34,6 +36,21 @@ class PairingError(CapAuthError):
     """Raised when a pairing operation is refused (bad window, unknown id, ...)."""
 
 
+#: A bare device fingerprint (no ``device:`` prefix, no ``@``): the exact shape
+#: :func:`fingerprint_for` returns and the one this function itself used to
+#: store verbatim as the default subject. It is also what
+#: ``skchat.pairing_mirror.mirror_admission`` presents as ``subject=peer_fp``
+#: (a real, live caller, not a hypothetical). Under
+#: ``IDENTITY_NAMING_STANDARD.md`` sec 1, ``device:<fingerprint>`` is the ONE
+#: legal prefixed subject class, so a string that is already exactly hex of
+#: legal fingerprint length, missing only that prefix, has exactly one sane
+#: reading: a caller that meant the device-seat form and omitted the prefix.
+#: Deliberately narrow (anchored, hex-only, the same 16-64 length canonical_subject's
+#: own grammar allows) so it can never reinterpret a genuine ``local@domain``
+#: or already-prefixed subject.
+_BARE_FINGERPRINT_RE = re.compile(r"^[0-9a-f]{16,64}$")
+
+
 def _coerce_mode(mode: EnrollmentMode | str) -> EnrollmentMode:
     if isinstance(mode, EnrollmentMode):
         return mode
@@ -41,6 +58,96 @@ def _coerce_mode(mode: EnrollmentMode | str) -> EnrollmentMode:
         return EnrollmentMode(mode)
     except ValueError as exc:
         raise PairingError(f"unknown enrollment mode: {mode!r}") from exc
+
+
+def _with_bare_fingerprint_shorthand(candidate: str) -> str:
+    """Prefix a bare device fingerprint with ``device:``, else pass through.
+
+    Shared by the write path (:func:`_resolve_subject`, below) and the read
+    path (:func:`list_devices`'s subject filter), so a query for the same bare
+    fingerprint an enrollment was made under still finds the now-canonical
+    ``device:<fingerprint>`` record. See :func:`_resolve_subject` for the full
+    rationale.
+    """
+    if _BARE_FINGERPRINT_RE.match(candidate.lower()):
+        return f"device:{candidate}"
+    return candidate
+
+
+def _try_canonicalize(raw: str) -> Optional[str]:
+    """Best-effort :func:`canonical_subject`, returning None instead of raising.
+
+    For read paths (``list_devices``): a query subject that does not
+    canonicalize is not a defect to refuse, just a shape :func:`_resolve_subject`
+    would have refused had it been an enroll. The caller falls back to a
+    raw-string comparison so an already-stored legacy-shaped record (enrolled
+    before this card, or filtered on the same legacy string a live caller
+    still passes) is still found.
+    """
+    try:
+        return canonical_subject(_with_bare_fingerprint_shorthand(raw.strip()))
+    except SubjectNamingError:
+        return None
+
+
+def _resolve_subject(subject: Optional[str], fingerprint: str) -> Optional[str]:
+    """Resolve and canonicalize the subject an enrollment is recorded under.
+
+    Card N3 (``bab1cca6``): this is capauth's live proof that mismatched
+    subject shapes fail closed as an opaque "unknown subject" deny rather than
+    the naming defect they actually are. Routes the resolved subject through
+    :func:`canonical_subject` and lets a refusal propagate, so the shape can
+    never regress past this one entry point.
+
+    Normalizes rather than rejects on a translatable legacy shape (a
+    ``capauth:`` prefix, a missing-TLD ``@chef.skworld``, ``operator:<fp>``,
+    ...): the real callers of ``enroll_device`` today
+    (``capauth.provisioning``, ``skchat.operator_grants``,
+    ``skcomms.pairing_mirror``) all present one of those translatable
+    legacy shapes, not the bare canonical form, because the identity code that
+    builds their subject strings predates the standard. Rejecting those
+    outright would immediately break every one of them; :func:`canonical_subject`
+    already encodes exactly which shapes are safe to translate versus which
+    are a genuine defect, so enroll_device defers to it rather than
+    second-guessing it with a stricter equality check.
+
+    One caller-facing shape needs a second pass first: a BARE device
+    fingerprint (no ``device:`` prefix), which is both this function's own
+    fallback (``subject`` not given -> the fingerprint) and what
+    ``skchat.pairing_mirror.mirror_admission`` presents as ``subject=peer_fp``.
+    That shape is not in ``canonical_subject``'s alias table (by design: the
+    table only lists shapes the standard's own audit found actually enrolled
+    under a wrong spelling of a human/agent identity, not the ONE case where a
+    subject is a device-fingerprint-only seat and only its prefix went
+    missing). It is unambiguous under the grammar, so it is resolved here,
+    once, before the general normalizer runs.
+
+    Args:
+        subject: The caller-presented subject, or None to derive from
+            ``fingerprint``.
+        fingerprint: This enrollment's device fingerprint (may be "").
+
+    Returns:
+        The canonical fqid, or None when neither a subject nor a usable
+        fingerprint was presented (nothing to canonicalize; the record keeps
+        capauth's existing "None = derive later" contract for that case).
+
+    Raises:
+        SubjectNamingError: ``subject`` (or the derived fingerprint) does not
+            conform to the canonical fqid grammar even after alias
+            translation.
+    """
+    raw = subject if subject is not None else (fingerprint or None)
+    if not raw:
+        return None
+
+    candidate = _with_bare_fingerprint_shorthand(raw.strip())
+    try:
+        return canonical_subject(candidate)
+    except SubjectNamingError as exc:
+        raise SubjectNamingError(
+            f"enroll_device refuses non-canonical subject {raw!r}: {exc}"
+        ) from exc
 
 
 def enroll_device(
@@ -76,6 +183,11 @@ def enroll_device(
         mode: ``verified`` | ``attested`` | ``tofu`` (or the enum).
         base_dir: Injectable storage root (defaults to ``~/.skcapstone``).
         subject: Who the device belongs to; defaults to its fingerprint.
+            Canonicalized via :func:`capauth.subject.canonical_subject` (card
+            N3): a translatable legacy shape (``capauth:`` prefix,
+            missing-TLD, ``operator:<fp>``, a bare device fingerprint, ...)
+            is normalized to its one canonical fqid; a subject that still
+            does not conform after translation is refused.
         window: An open :class:`PairingWindow` to gate this enroll.
         window_nonce: The nonce presented against ``window``.
         operator_id: Vouching operator id (attested).
@@ -88,6 +200,9 @@ def enroll_device(
 
     Raises:
         PairingError: If the window gate refuses the attempt.
+        SubjectNamingError: If ``subject`` (or the fingerprint it defaults
+            to) does not conform to the canonical fqid grammar even after
+            alias translation.
     """
     resolved_mode = _coerce_mode(mode)
     store = PairingStore(base_dir)
@@ -103,12 +218,13 @@ def enroll_device(
         nonce = window_nonce
 
     fingerprint = fingerprint_for(pubkey)
+    canonical = _resolve_subject(subject, fingerprint)
     enrollment = Enrollment(
         pubkey=pubkey,
         fingerprint=fingerprint,
         requested_scopes=list(requested_scopes or []),
         mode=resolved_mode,
-        subject=subject or (fingerprint or None),
+        subject=canonical,
         window_id=window_id,
         nonce=nonce,
         operator_id=operator_id,
@@ -206,6 +322,15 @@ def list_devices(
 ) -> list[DeviceRecord]:
     """List approved devices, optionally filtered to a single ``subject``.
 
+    The filter matches on the raw (lowercased) ``subject`` as given AND, when
+    it canonicalizes, on its canonical fqid (card N3): since
+    :func:`enroll_device` now stores subjects canonically, a caller filtering
+    on the same legacy-shaped string it enrolled with (e.g. a bare device
+    fingerprint) still finds the record. A ``subject`` that does not
+    canonicalize is not refused here, only matched by its raw form, so
+    records enrolled before this card (under a non-canonical subject) remain
+    findable.
+
     Args:
         subject: If given, only devices belonging to this subject.
         base_dir: Injectable storage root.
@@ -217,8 +342,11 @@ def list_devices(
     store = PairingStore(base_dir)
     devices = [d for _path, d in store.iter_devices()]
     if subject is not None:
-        wanted = subject.strip().lower()
-        devices = [d for d in devices if (d.subject or "").strip().lower() == wanted]
+        wanted = {subject.strip().lower()}
+        canonical = _try_canonicalize(subject)
+        if canonical is not None:
+            wanted.add(canonical)
+        devices = [d for d in devices if (d.subject or "").strip().lower() in wanted]
     if not include_revoked:
         devices = [d for d in devices if not d.revoked]
     devices.sort(key=lambda d: d.approved_at, reverse=True)

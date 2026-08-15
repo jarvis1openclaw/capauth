@@ -25,7 +25,7 @@ from capauth.authz import DEFAULT_RULES, decide
 from capauth.pairing import EnrollmentMode, approve, enroll_device
 from capauth.tokens import issue_token
 
-SUBJECT = "alice@chef.skworld"
+SUBJECT = "alice@chef.skworld.io"
 PUBKEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----"
 
 # ``decide`` requires the granting token to carry a verifying signature, so
@@ -125,7 +125,7 @@ def test_agentrun_execute_requires_verified(tmp_path):
     assert denied.allow is False
     assert "insufficient enrollment mode" in denied.reason
 
-    verified_subject = "bob@chef.skworld"
+    verified_subject = "bob@chef.skworld.io"
     _enroll(
         tmp_path,
         mode=EnrollmentMode.VERIFIED,
