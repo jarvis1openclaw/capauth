@@ -25,6 +25,8 @@ from capauth.authz import DEFAULT_RULES, decide
 from capauth.pairing import EnrollmentMode, approve, enroll_device
 from capauth.tokens import issue_token
 
+from .conftest import enrolled_attested_credentials, enrolled_verified_credentials
+
 SUBJECT = "alice@chef.skworld.io"
 PUBKEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----"
 
@@ -37,13 +39,31 @@ pytestmark = pytest.mark.usefixtures("stub_token_signing")
 # helpers (all base_dir-injected; mirrors tests/test_authz.py)
 # --------------------------------------------------------------------------- #
 def _enroll(base: Path, *, mode: EnrollmentMode, subject: str = SUBJECT, scopes=None):
-    """Enroll + approve a device for ``subject`` under ``mode``. Returns the record."""
+    """Enroll + approve a device for ``subject`` under ``mode``. Returns the record.
+
+    ``PUBKEY`` is a fake armored-looking placeholder with no real key behind
+    it, so it cannot carry a real proof of possession. ``enroll_device`` now
+    validates proof for verified/attested (card N10, 09a6d6f3), so this helper
+    mints a real keypair and signs the real challenge for those two modes,
+    mirroring ``tests/test_authz.py``'s ``_enroll``; tofu still needs neither
+    and keeps using the placeholder.
+    """
+    pubkey = PUBKEY
+    extra: dict = {}
+    if mode == EnrollmentMode.VERIFIED:
+        pubkey, proof = enrolled_verified_credentials(subject)
+        extra = {"proof": proof}
+    elif mode == EnrollmentMode.ATTESTED:
+        operator_pubkey, attestation = enrolled_attested_credentials(pubkey, subject)
+        extra = {"operator_pubkey": operator_pubkey, "attestation": attestation}
+
     enrollment = enroll_device(
-        PUBKEY,
+        pubkey,
         scopes or ["agentrun.queue", "agentrun.execute"],
         mode=mode,
         base_dir=base,
         subject=subject,
+        **extra,
     )
     return approve(enrollment.enrollment_id, "operator@chef.skworld", base_dir=base)
 

@@ -25,6 +25,8 @@ import pytest
 
 from capauth.authz import DEFAULT_RULES, decide
 from capauth.pairing import EnrollmentMode, approve, enroll_device
+
+from .conftest import enrolled_attested_credentials, enrolled_verified_credentials
 from capauth.tokens import issue_token
 
 SUBJECT = "alice@chef.skworld.io"
@@ -51,12 +53,26 @@ pytestmark = pytest.mark.usefixtures("stub_token_signing")
 # --------------------------------------------------------------------------- #
 def _enroll(base: Path, *, mode: EnrollmentMode, subject: str = SUBJECT, scopes=None):
     """Enroll + approve a device for ``subject`` under ``mode``. Returns the record."""
+    # Card N10: verified/attested enrollment now requires real evidence, so a
+    # module-level fake PUBKEY no longer enrolls at those tiers. Mint genuine
+    # credentials bound to this exact subject. Enrollment is incidental setup
+    # in this file; the assertions below are unchanged.
+    pubkey = PUBKEY
+    extra: dict = {}
+    if mode == EnrollmentMode.VERIFIED:
+        pubkey, proof = enrolled_verified_credentials(subject)
+        extra = {"proof": proof}
+    elif mode == EnrollmentMode.ATTESTED:
+        operator_pubkey, attestation = enrolled_attested_credentials(pubkey, subject)
+        extra = {"operator_pubkey": operator_pubkey, "attestation": attestation}
+
     enrollment = enroll_device(
-        PUBKEY,
+        pubkey,
         scopes or list(ALL_CHANGE_CAPABILITIES),
         mode=mode,
         base_dir=base,
         subject=subject,
+        **extra,
     )
     return approve(enrollment.enrollment_id, "operator@chef.skworld", base_dir=base)
 

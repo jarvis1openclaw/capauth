@@ -41,6 +41,66 @@ def rsa_keybundle(pgpy_backend) -> "KeyBundle":
     return pgpy_backend.generate_keypair(TEST_NAME, TEST_EMAIL, TEST_PASSPHRASE, Algorithm.RSA4096)
 
 
+# --- Enrollment proof helpers (card N10, 09a6d6f3) --------------------------
+# capauth.pairing.enroll_device now VALIDATES proof for verified/attested
+# mode instead of storing a caller-asserted claim unchecked. These build real,
+# fast (Ed25519) keypairs and real signatures over the exact challenge
+# enroll_device itself verifies, so pairing/authz/provisioning tests exercise
+# actual proof, not a placeholder string a pre-N10 enroll_device would have
+# accepted regardless.
+#
+# CI only runs Python 3.11/3.12 (see .github/workflows/pytest.yml -- PGPy
+# needs the stdlib ``imghdr`` module, removed in 3.13), so unlike the
+# ``_requires_crypto``-guarded fixtures above these are NOT skip-guarded: real
+# crypto is always available where these tests run.
+
+
+def enrolled_verified_credentials(subject: str) -> tuple[str, str]:
+    """A ``(pubkey_armor, proof_armor)`` pair that legitimately enrolls VERIFIED.
+
+    ``subject`` must be the CANONICAL subject :func:`capauth.pairing.enroll_device`
+    will resolve to (i.e. already the fqid it will store, not a legacy shape it
+    would still translate) -- the proof is bound to that exact string via
+    :func:`capauth.pairing.verified_challenge`, so a mismatch here fails the
+    same way a forged proof would.
+    """
+    from capauth.crypto import get_backend
+    from capauth.models import Algorithm as _Algorithm
+    from capauth.pairing import verified_challenge
+    from capauth.pairing.store import fingerprint_for
+
+    backend = get_backend()
+    bundle = backend.generate_keypair(TEST_NAME, TEST_EMAIL, TEST_PASSPHRASE, _Algorithm.ED25519)
+    fingerprint = fingerprint_for(bundle.public_armor)
+    proof = backend.sign(
+        verified_challenge(fingerprint, subject), bundle.private_armor, TEST_PASSPHRASE
+    )
+    return bundle.public_armor, proof
+
+
+def enrolled_attested_credentials(device_pubkey: str, subject: str) -> tuple[str, str]:
+    """An ``(operator_pubkey_armor, attestation_armor)`` pair proving ATTESTED.
+
+    Mints a fresh "operator" keypair and signs :func:`capauth.pairing.attested_challenge`
+    for ``device_pubkey``'s fingerprint + ``subject`` (see
+    :func:`enrolled_verified_credentials` for the same canonical-subject caveat).
+    """
+    from capauth.crypto import get_backend
+    from capauth.models import Algorithm as _Algorithm
+    from capauth.pairing import attested_challenge
+    from capauth.pairing.store import fingerprint_for
+
+    backend = get_backend()
+    op_bundle = backend.generate_keypair(
+        TEST_NAME, TEST_EMAIL, TEST_PASSPHRASE, _Algorithm.ED25519
+    )
+    device_fingerprint = fingerprint_for(device_pubkey)
+    attestation = backend.sign(
+        attested_challenge(device_fingerprint, subject), op_bundle.private_armor, TEST_PASSPHRASE
+    )
+    return op_bundle.public_armor, attestation
+
+
 @pytest.fixture
 def tmp_capauth_home(tmp_path) -> Path:
     """Provide a temporary directory for profile tests."""
