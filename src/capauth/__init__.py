@@ -207,7 +207,21 @@ __all__ = [
     "save_calibration",
 ]
 
-__version__ = "0.2.15"
+# The git tag is the real version: pyproject declares `dynamic = ["version"]`
+# and setuptools_scm derives it at build time. A hardcoded literal here does not
+# feed packaging, it only shadows it, so it drifts silently and reports a version
+# that has not been true since 0.2.15. That is not a cosmetic problem: on
+# 2026-08-16 a fleet audit read this attribute and concluded three nodes ran
+# 0.2.15 when every one of them had 0.3.0 installed, which inverted the
+# risk assessment for a node that could not sign. Read the installed
+# distribution metadata instead, so this attribute can only ever agree with what
+# pip actually resolved.
+try:  # pragma: no cover - trivial, and the fallback is exercised below
+    from importlib.metadata import PackageNotFoundError, version as _dist_version
+
+    __version__ = _dist_version("capauth")
+except PackageNotFoundError:  # running from a source tree with no install
+    __version__ = "0.0.0.dev0"
 
 SKCAPSTONE_HOME = Path.home() / ".skcapstone"
 DEFAULT_CAPAUTH_DIR = SKCAPSTONE_HOME / "capauth"
