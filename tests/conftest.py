@@ -100,6 +100,55 @@ def enrolled_attested_credentials(device_pubkey: str, subject: str) -> tuple[str
     return op_bundle.public_armor, attestation
 
 
+def enrolled_device_key_credentials(
+    subject: str, *, sig_encoding: str = "p1363"
+) -> tuple[str, str]:
+    """A ``(pubkey_b64, proof_b64)`` pair for a WebCrypto ECDSA P-256 device key.
+
+    Mirrors :func:`enrolled_verified_credentials` but for the non-PGP key shape
+    skchat's operator devices actually present: ``pubkey_b64`` is a base64 DER
+    SubjectPublicKeyInfo (what ``window.crypto.subtle.exportKey("spki", ...)``
+    yields, base64-encoded), and ``proof_b64`` is a base64 ECDSA signature over
+    the exact :func:`capauth.pairing.verified_challenge` bytes for this key's
+    :func:`capauth.pairing.store.fingerprint_for` fingerprint + ``subject`` --
+    the same binding :func:`enrolled_verified_credentials` proves, just with a
+    real ``cryptography`` P-256 keypair instead of a PGPy one, and no mock of
+    any verifier.
+
+    ``sig_encoding`` picks which of the two shapes a real WebCrypto signature
+    may arrive in: ``"p1363"`` (WebCrypto's native raw ``r||s``, 64 bytes) or
+    ``"der"`` (ASN.1 DER, the shape most non-browser ECDSA libraries emit).
+    Both must verify identically.
+    """
+    import base64
+
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
+    from capauth.pairing import verified_challenge
+    from capauth.pairing.store import fingerprint_for
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    spki = private_key.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    pubkey_b64 = base64.b64encode(spki).decode("ascii")
+    fingerprint = fingerprint_for(pubkey_b64)
+    challenge = verified_challenge(fingerprint, subject)
+    der_sig = private_key.sign(challenge, ec.ECDSA(hashes.SHA256()))
+
+    if sig_encoding == "der":
+        sig_bytes = der_sig
+    elif sig_encoding == "p1363":
+        r, s = decode_dss_signature(der_sig)
+        sig_bytes = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    else:
+        raise ValueError(f"unknown sig_encoding: {sig_encoding!r}")
+
+    return pubkey_b64, base64.b64encode(sig_bytes).decode("ascii")
+
+
 @pytest.fixture
 def tmp_capauth_home(tmp_path) -> Path:
     """Provide a temporary directory for profile tests."""

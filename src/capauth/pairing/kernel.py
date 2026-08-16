@@ -72,20 +72,53 @@ def _proof_verifies(
 ) -> bool:
     """Fail-closed signature check: True only for a real, matching signature.
 
-    Any failure mode -- missing key, missing signature, unparseable armor, a
-    signature over different bytes, a signature from a different key, a crypto
-    backend that is unavailable in this interpreter -- returns False rather
-    than raising, so a caller who cannot produce a real proof is refused with
-    the same "invalid proof" reason as a caller who forged one, never with an
-    unrelated crash.
+    Accepts either key shape a caller may present, dispatched on the key
+    material itself -- the same ``"BEGIN PGP" in key`` discriminator
+    :func:`capauth.pairing.store.fingerprint_for` already uses to tell an
+    armored PGP key from an opaque one, never a caller-supplied "which
+    algorithm" flag (a caller that picks its own verifier could pick a weak
+    one):
+
+    * An ASCII-armored PGP key: ``signature_armor`` must be a detached
+      signature over ``challenge``, verified by capauth's PGP backend
+      (unchanged from before this widening).
+    * Anything else is treated as a base64 DER SPKI WebCrypto ECDSA P-256
+      device key (skchat/skcode's device-linking key shape):
+      ``signature_armor`` must be a base64 ECDSA signature -- WebCrypto's
+      64-byte P1363 ``r||s`` or DER -- over ``challenge``, verified via
+      :func:`capauth.pairing.operator_session.verify_device_signature` (the
+      one ECDSA verifier this package already ships, reused here rather than
+      re-implemented).
+
+    Any failure mode -- missing key, missing signature, unparseable armor or
+    base64/DER, a signature over different bytes, a signature from a
+    different key, a crypto backend that is unavailable in this interpreter
+    -- returns False rather than raising, so a caller who cannot produce a
+    real proof is refused with the same "invalid proof" reason as a caller
+    who forged one, never with an unrelated crash. A PGP-armored key is never
+    handed to the ECDSA path or vice versa: the branch is chosen once, up
+    front, from the key material alone.
     """
     if not pubkey_armor or not signature_armor:
         return False
-    try:
-        from capauth.crypto import get_backend
+    if "BEGIN PGP" in pubkey_armor:
+        try:
+            from capauth.crypto import get_backend
 
-        return bool(get_backend().verify(challenge, signature_armor, pubkey_armor))
-    except Exception:  # noqa: BLE001 -- any backend/parse failure means "not proven"
+            return bool(get_backend().verify(challenge, signature_armor, pubkey_armor))
+        except Exception:  # noqa: BLE001 -- any backend/parse failure means "not proven"
+            return False
+    try:
+        from .operator_session import verify_device_signature
+
+        return bool(
+            verify_device_signature(
+                device_pubkey_b64=pubkey_armor,
+                payload=challenge,
+                sig_b64=signature_armor,
+            )
+        )
+    except Exception:  # noqa: BLE001 -- malformed b64/DER/key means "not proven"
         return False
 
 
