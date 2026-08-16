@@ -39,6 +39,19 @@ All notable changes to `capauth` are documented here. The format is based on
     immediately; when a real `pubkey` is given, new optional `proof` /
     `operator_pubkey` / `attestation` kwargs pass through untouched rather
     than being fabricated on the caller's behalf.
+- **Publishing to PyPI could not work at all.** The workflow triggers only on
+  a `v*` tag push, but the `tag` job that supplies the version is gated on
+  `github.ref == 'refs/heads/main'`, so on the only path that actually runs it
+  is always skipped and `needs.tag.outputs.version` is always empty. An empty
+  `SETUPTOOLS_SCM_PRETEND_VERSION` makes setuptools-scm derive from git
+  instead, and any dirt in the CI checkout (a regenerated `egg-info`, for one)
+  then produces a dev version with a local segment. PyPI rejects that with a
+  400, and by then the tag has already been cut. Observed live: `v0.3.0` was
+  tagged and published nothing, emitting
+  `0.3.1.dev0+gc16c51c.d20260815`. The version now falls back to the tag name,
+  so a tag-triggered publish is deterministic regardless of tree cleanliness.
+  Same family as the skcoord release outage; the sibling repos want checking
+  for the identical shape.
 
 ### Added
 
