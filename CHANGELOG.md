@@ -6,8 +6,57 @@ All notable changes to `capauth` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`capauth.testing`: the gpg signing test seam, promoted from `tests/conftest.py`
+  into shipped, importable code.** Since `0d412ab`, `issue_token` and
+  `mint_audience_token` RAISE rather than storing an unsigned token, and
+  `decide()` rejects unsigned tokens. Both are correct, but they made real gpg (a
+  secret key present, an agent unlocked) a hard dependency of any test that
+  expects an ALLOW. A GitHub Actions runner has neither, so downstream suites went
+  red at the mint or 403'd at the gate. CapAuth's own suite was insulated only
+  because the stub was private to its `tests/conftest.py`, where no consumer could
+  reach it. It is now shipped:
+  - `capauth.testing.capauth_signing_stub` — autouse fixture; a consuming repo
+    turns it on for its whole suite with one line in its `tests/conftest.py`:
+    `from capauth.testing import capauth_signing_stub  # noqa: F401`.
+  - `capauth.testing.stub_token_signing` — the same thing, non-autouse, for
+    opting in per test or per module.
+  - `capauth.testing.signing_stub()` — a plain context manager, for use outside
+    pytest.
+  - `capauth.testing.install_signing_stub(monkeypatch)` — the building block, for
+    applying the seam at a point of the caller's own choosing.
+  - The seam stubs the **gpg subprocess boundary only**: three attributes of
+    `capauth.tokens` (`_get_issuer_fingerprint`, `_pgp_sign_payload`, and the
+    `verify_manifest` that module imported). It weakens **nothing**. Its stand-in
+    signature is a digest of the exact payload bytes, accepted only for those
+    bytes and only from the one issuer it signs as, so with the seam active an
+    unsigned token is still denied for `skcode.dispatch`, a tampered payload is
+    still denied, a signature lifted from another token is still denied, and a
+    well-formed signature declaring a different issuer is still denied. The
+    verified-tier enrollment floor, `signature_verifies`, and the
+    raise-on-signing-failure behaviour are all untouched.
+  - It cannot be switched on by accident in a deployed process: nothing in
+    CapAuth's runtime imports it, importing it requires `pytest` (a dev extra, not
+    a runtime or `service` dependency), it registers no `pytest11` entry point so
+    pytest never auto-loads it, importing it patches nothing, every activation is
+    lexically scoped and reverts, and there is deliberately no env var or global
+    flag that enables it.
+  - `tests/conftest.py` now imports the shipped fixture rather than carrying a
+    second copy. New suite `tests/test_testing_helper.py` pins every claim above,
+    including one control that runs in a fresh subprocess (empty `sys.modules`, no
+    pytest session) and asserts its own isolation before asserting that
+    `issue_token` still raises on a genuine signing failure.
+
 ### Fixed
 
+- **`tests/test_identity_class.py` did not enroll under the card N10 proof rules**,
+  so ten of its cases failed on `main` from the moment `09a6d6f3` merged. Its
+  `_enroll` helper still passed a placeholder armored pubkey with no `proof` /
+  `attestation`, which `enroll_device` now correctly refuses. It builds real
+  keypairs and real challenge signatures via the existing conftest helpers
+  instead. No production code involved; the identity-class ceiling itself was
+  never broken.
 - **`enroll_device` accepted `verified` / `attested` as a caller-asserted claim,
   never checked** (card N10 `09a6d6f3`). `Enrollment.proof` and
   `Enrollment.attestation` were stored on the record but neither was ever
