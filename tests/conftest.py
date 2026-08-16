@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import pytest
@@ -194,71 +193,23 @@ def _isolate_skcapstone_agent_env(monkeypatch):
 
 
 # --- Token signing stub (PDP signature gate) --------------------------------
-# ``capauth.authz.decide`` requires the granting token to carry a signature that
-# verifies over its exact payload bytes, made by the key the payload names as
-# issuer. That makes real gpg a dependency of any suite that expects an ALLOW.
-# The authz / provisioning / capability suites are deliberately hermetic (no
-# gpg, no network, no real home) and their subject matter is enrollment modes,
-# capability chains, expiry and revocation, not OpenPGP itself, so they stub the
-# gpg boundary rather than generating real keys.
+# The stub itself now lives in SHIPPED code, ``capauth.testing``, because the
+# problem it solves is not CapAuth's alone: ``decide()`` requires a verifying
+# signature on the granting token and ``issue_token`` raises rather than storing
+# an unsigned one, so every downstream repo that mints a token in its tests
+# needs the same gpg-free seam on a CI runner that has no secret key. While this
+# fixture was private to this file, CapAuth's own suite was the only one that
+# could stay green, and skchat's went red on inheritance alone.
 #
-# The stub is FAITHFUL on purpose: it fakes ONLY the gpg subprocess, leaving the
-# real ``signature_verifies`` logic (empty-signature check, unattributable-issuer
-# check, canonical payload bytes, issuer pinning) running for real. Its "signature"
-# is a digest of the exact bytes signed, so an unsigned token still fails, a
-# tampered payload still fails, and a signature lifted from another token still
-# fails. A stub that just returned True would have let the very defect this gate
-# closes (SEC-CRIT bc56b98b: an unsigned token granting skcode.dispatch) sail
-# straight back in.
+# Imported, not re-implemented: a second copy would drift, and the copy that
+# drifts toward "just return True" is the one that silently re-opens SEC-CRIT
+# bc56b98b (an unsigned token granting skcode.dispatch). See
+# ``capauth.testing`` for what the stub does and does not fake, and
+# ``tests/test_testing_helper.py`` for the negative controls that pin it.
 #
-# Real end-to-end OpenPGP signing and verification is covered separately, against
-# a real generated key, in ``tests/test_authz_signature_gate.py``.
-
-#: The issuer fingerprint the stub pretends this node's identity key carries.
-STUB_ISSUER_FPR = "ABCDEF0123456789ABCDEF0123456789ABCDEF01"
-
-_STUB_SIG_HEAD = "-----BEGIN PGP SIGNATURE-----"
-_STUB_SIG_TAIL = "-----END PGP SIGNATURE-----"
-
-
-def stub_signature_for(payload_bytes: bytes) -> str:
-    """A deterministic stand-in signature bound to the exact bytes signed."""
-    digest = hashlib.sha256(payload_bytes).hexdigest()
-    return f"{_STUB_SIG_HEAD}\ncapauth-test-stub:{digest}\n{_STUB_SIG_TAIL}\n"
-
-
-@pytest.fixture
-def stub_token_signing(monkeypatch):
-    """Fake the gpg boundary so tokens can be signed and verified without gpg.
-
-    Patches exactly three seams:
-
-    * ``tokens._get_issuer_fingerprint`` so issued tokens name a plausible issuer
-      instead of the ``"unknown"`` placeholder (which ``signature_verifies``
-      correctly refuses as unattributable);
-    * ``tokens._pgp_sign_payload`` so ``sign=True`` yields a stand-in signature
-      over the payload's canonical bytes;
-    * ``tokens.verify_manifest`` so verification accepts exactly that stand-in,
-      for exactly those bytes, from exactly that issuer.
-
-    Everything else, including the whole of ``signature_verifies`` and the PDP,
-    runs unmodified.
-    """
-    from capauth import tokens as _tokens
-
-    monkeypatch.setattr(_tokens, "_get_issuer_fingerprint", lambda home: STUB_ISSUER_FPR)
-    monkeypatch.setattr(
-        _tokens,
-        "_pgp_sign_payload",
-        lambda payload, home: stub_signature_for(payload.model_dump_json().encode()),
-    )
-
-    def _fake_verify_manifest(manifest_bytes, signature, *, expected_signer=None):
-        if not signature:
-            return False
-        if expected_signer and expected_signer.strip().upper() != STUB_ISSUER_FPR:
-            return False
-        return signature == stub_signature_for(bytes(manifest_bytes))
-
-    monkeypatch.setattr(_tokens, "verify_manifest", _fake_verify_manifest)
-    return stub_signature_for
+# NOTE: the non-autouse ``stub_token_signing`` is the right import here, NOT
+# ``capauth.testing.capauth_signing_stub``. This suite contains tests that must
+# run against the REAL gpg path (``tests/test_authz_signature_gate.py``) and
+# against a genuine signing FAILURE (``tests/test_testing_helper.py``), so the
+# stub has to stay opt-in per module.
+from capauth.testing import stub_token_signing  # noqa: E402,F401 - re-exported fixture

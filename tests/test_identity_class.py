@@ -41,11 +41,13 @@ from capauth.identity_class import (
     resolve_identity_class,
 )
 from capauth.pairing import EnrollmentMode, approve, enroll_device
+from capauth.subject import canonical_subject
 from capauth.tokens import Capability, issue_token
+
+from .conftest import enrolled_attested_credentials, enrolled_verified_credentials
 
 NODE_SUBJECT = "worker@chef.skworld.io"
 OTHER_SUBJECT = "alice@chef.skworld.io"
-PUBKEY = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----"
 
 # ``decide`` requires a verifying signature on the granting token, so every test
 # here issues SIGNED tokens against the hermetic gpg stub (see conftest).
@@ -56,13 +58,36 @@ pytestmark = pytest.mark.usefixtures("stub_token_signing")
 # helpers (all base_dir-injected)
 # --------------------------------------------------------------------------- #
 def _enroll(base: Path, *, mode: EnrollmentMode, subject: str = NODE_SUBJECT):
-    """Enroll + approve a device for ``subject`` under ``mode``."""
+    """Enroll + approve a device for ``subject`` under ``mode``.
+
+    Card N10 (``09a6d6f3``) made ``enroll_device`` VALIDATE the evidence for the
+    two non-``tofu`` modes instead of storing a caller-asserted claim, so the
+    fake armored-pubkey placeholder this file used no longer enrolls at
+    ``verified`` or ``attested``. Real keys and real signatures over the exact
+    challenges
+    ``enroll_device`` re-derives are built here instead. Enrollment is incidental
+    setup for this file: what it actually tests is the identity-class CEILING,
+    which sits above enrollment entirely. Both challenges bind to the CANONICAL
+    subject, so that is what is resolved and passed.
+    """
+    canonical = canonical_subject(subject)
+    pubkey, proof = enrolled_verified_credentials(canonical)
+
+    evidence: dict = {}
+    if mode is EnrollmentMode.VERIFIED:
+        evidence["proof"] = proof
+    elif mode is EnrollmentMode.ATTESTED:
+        operator_pubkey, attestation = enrolled_attested_credentials(pubkey, canonical)
+        evidence["operator_pubkey"] = operator_pubkey
+        evidence["attestation"] = attestation
+
     enrollment = enroll_device(
-        PUBKEY,
+        pubkey,
         ["skgateway.infer", "skchat.inbox"],
         mode=mode,
         base_dir=base,
         subject=subject,
+        **evidence,
     )
     return approve(enrollment.enrollment_id, "operator@chef.skworld", base_dir=base)
 
