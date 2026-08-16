@@ -8,6 +8,28 @@ All notable changes to `capauth` are documented here. The format is based on
 
 ### Fixed
 
+- **`verified` enrollment was unprovable for WebCrypto device keys**
+  (`inc-c72a9120`). N10's proof check was correct but PGP-only: it verified
+  `proof` solely through `capauth.crypto`'s armored-signature backend, while
+  skchat's operator devices present a base64 DER SPKI **WebCrypto ECDSA
+  P-256** key and sign with P1363 `r||s`. Those callers could not produce an
+  acceptable proof at all, so `enroll_device(mode="verified")` raised for
+  every real device link, and skchat's best-effort call site swallowed it:
+  a newly linked device enrolled successfully and silently received no
+  capabilities (no prekey, no inbox, and none of the VERIFIED-tier
+  `skchat.send` / `skchat.groups` / `skchat.calls` its own traffic needs).
+  `_proof_verifies` now dispatches on the key material itself, the same
+  `"BEGIN PGP"` discriminator `fingerprint_for()` already uses, and verifies
+  a device key through `pairing.operator_session.verify_device_signature`,
+  the ECDSA verifier this package already shipped, reused rather than
+  reimplemented. **N10 is not weakened**: `verified` still requires a real
+  signature over exactly `verified_challenge(fingerprint, subject)`, the
+  accepted key TYPE widened, not the requirement. Both branches stay
+  fail-closed, and a PGP key is never verified by the ECDSA path or the
+  reverse.
+
+### Fixed
+
 - **`enroll_device` accepted `verified` / `attested` as a caller-asserted claim,
   never checked** (card N10 `09a6d6f3`). `Enrollment.proof` and
   `Enrollment.attestation` were stored on the record but neither was ever
