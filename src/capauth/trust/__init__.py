@@ -23,6 +23,7 @@ from capauth.trust.calibration import (
 )
 from capauth.trust.graph import (
     FORMATTERS,
+    SourceHealth,
     TrustEdge,
     TrustGraph,
     TrustNode,
@@ -35,6 +36,7 @@ from capauth.trust.graph import (
 __all__ = [
     # graph
     "FORMATTERS",
+    "SourceHealth",
     "TrustEdge",
     "TrustGraph",
     "TrustNode",

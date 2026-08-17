@@ -383,6 +383,18 @@ verify `POST /capauth/v1/verify` (`:266`), authz decision
 (`:653`). **No `/health` route exists**; `/capauth/v1/status` is the liveness probe
 (that is what the compose healthcheck curls).
 
+**Trust graph.** `capauth.trust.graph.build_trust_graph` is a VISUALISATION, not
+a decision input: `TrustEdge.strength` is read only by the renderers (DOT
+`penwidth`, the ASCII bar, skdashboard's stroke width), and no authorization path
+(`authz.py`, `tokens.py`, `service/`) imports the trust graph at all. One of its
+inputs, the coordination `agents/*.json` projection, is known to be corrupt in
+four measured ways and is read anyway under a `# PROJECTION-OK:` marker whose
+justification depends on that separation holding. Every graph now reports per
+source read health (`ok` / `absent` / `degraded` / `unreadable`) so an unreadable
+input is distinguishable from a genuinely empty one. Audit, the marker's
+conditions, and the proposed weighting change:
+[docs/TRUST_GRAPH_COORD_PROJECTION.md](docs/TRUST_GRAPH_COORD_PROJECTION.md).
+
 Full protocol + claim/token format: [docs/PROTOCOL.md](docs/PROTOCOL.md),
 [docs/CLAIMS.md](docs/CLAIMS.md). Crypto detail: [docs/CRYPTO_SPEC.md](docs/CRYPTO_SPEC.md).
 
@@ -443,8 +455,18 @@ Full protocol + claim/token format: [docs/PROTOCOL.md](docs/PROTOCOL.md),
 **SK = staycuriousANDkeepsmilin 🐧** — *capauth: you are not a user, you are a sovereign.*
 
 <!-- docs-evidence
-verified: 2026-08-15
+verified: 2026-08-16
 checks:
+  - name: the trust graph is still display-only, which is what section 7 and the PROJECTION-OK marker rest on
+    run: ! grep -rqE 'trust\.graph|build_trust_graph|TrustEdge' src/capauth/authz.py src/capauth/tokens.py src/capauth/service/
+  - name: the coord projection read still carries its PROJECTION-OK justification
+    run: grep -qF '# PROJECTION-OK:' src/capauth/trust/graph.py
+  - name: coord edges still declare their count uncorroborated
+    run: grep -qF '"corroborated": False' src/capauth/trust/graph.py
+  - name: the coord weight constants and their saturation point are still recorded, not inline magic
+    run: grep -qxF 'COORD_SATURATION_TASKS = 14' src/capauth/trust/graph.py && grep -qxF 'COORD_BASE_STRENGTH = 0.3' src/capauth/trust/graph.py
+  - name: a degraded source is still reported rather than swallowed into an empty graph
+    run: grep -qF 'def warnings(' src/capauth/trust/graph.py && grep -qF '"unreadable"' src/capauth/trust/graph.py
   - name: both console-script entry points are exactly as section 7 documents
     run: grep -qxF 'capauth = "capauth.cli:main"' pyproject.toml && grep -qxF 'capauth-service = "capauth.service.server:main"' pyproject.toml
   - name: capauth-service still defaults to 127.0.0.1 and port 8420 (section 5 Scenario A)

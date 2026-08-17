@@ -91,6 +91,7 @@ from .trust import (
     CALIBRATION_FILENAME,
     DEFAULT_THRESHOLDS,
     FORMATTERS,
+    SourceHealth,
     TrustEdge,
     TrustGraph,
     TrustNode,
@@ -191,6 +192,7 @@ __all__ = [
     "has_scope",
     # trust (kernel track M1: moved verbatim from skcapstone)
     "FORMATTERS",
+    "SourceHealth",
     "CALIBRATION_FILENAME",
     "DEFAULT_THRESHOLDS",
     "TrustEdge",
@@ -217,7 +219,8 @@ __all__ = [
 # distribution metadata instead, so this attribute can only ever agree with what
 # pip actually resolved.
 try:  # pragma: no cover - trivial, and the fallback is exercised below
-    from importlib.metadata import PackageNotFoundError, version as _dist_version
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _dist_version
 
     __version__ = _dist_version("capauth")
 except PackageNotFoundError:  # running from a source tree with no install
