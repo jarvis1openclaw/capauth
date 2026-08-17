@@ -19,7 +19,7 @@ A resolved identity carries **two complementary URIs**:
 
 ``fqid``
     ``<agent>@<operator>.<realm>`` — the skcomms three-tier FQID
-    (agent @ operator . realm, e.g. ``lumina@chef.skworld``).  Derived from
+    (agent @ operator . realm, e.g. ``lumina@chef.skworld.io``).  Derived from
     ``~/.skcapstone/cluster.json`` for operator/realm; ``None`` when
     cluster.json is absent or malformed.
 
@@ -38,7 +38,7 @@ Public API
     # AgentIdentity(
     #   agent       = "lumina",
     #   capauth_uri = "capauth:lumina@skworld.io",
-    #   fqid        = "lumina@chef.skworld",
+    #   fqid        = "lumina@chef.skworld.io",
     #   fingerprint = "02BC0EB3CAD31DB691A753C70C5629AB893F9746",
     # )
 
@@ -84,7 +84,7 @@ class AgentIdentity:
         agent:        Short agent name (e.g. ``"lumina"``).
         capauth_uri:  Wire identity — ``capauth:<agent>@skworld.io``.
         fqid:         Three-tier label — ``<agent>@<operator>.<realm>``
-                      (e.g. ``"lumina@chef.skworld"``).  ``None`` when
+                      (e.g. ``"lumina@chef.skworld.io"``).  ``None`` when
                       cluster.json is not available.
         fingerprint:  40 (v4) or 64 (v6) hex PGP fingerprint from the agent's
                       CapAuth profile.  ``None`` when no real profile exists.
@@ -274,7 +274,7 @@ def resolve_agent_identity(
         >>> ident.capauth_uri
         'capauth:lumina@skworld.io'
         >>> ident.fqid   # only if cluster.json present
-        'lumina@chef.skworld'
+        'lumina@chef.skworld.io'
     """
     if agent is None:
         agent = _resolve_active_agent_name()
