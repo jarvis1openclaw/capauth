@@ -14,13 +14,17 @@ Two stores, one injectable root (``base_dir``, defaults to ``~/.skcapstone``):
   format keyed by ``enrollment_id``.
 
 ``base_dir`` is a constructor argument so tests use ``tmp_path`` and never touch
-the real registry.
+the real registry. When it is not given, the root comes from
+:func:`default_base_dir`, which honours ``$SKCAPSTONE_HOME`` -- read its warning
+before setting that: relocating the root relocates THIS store too, so the node
+starts with no enrolled devices.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,9 +42,59 @@ SIDECAR_KEY = "pairing"
 
 _SLUG_RE = re.compile(r"[^a-z0-9._-]+")
 
+#: Env var that relocates the skcapstone home :func:`default_base_dir` resolves.
+#:
+#: Deliberately the SAME name :func:`capauth.manifest.shell_home` already reads
+#: (and skos' own ``_skcapstone_home``), because it names the same directory:
+#: ``~/.skcapstone``. A capauth-private second spelling would let the registry
+#: capauth writes and the one the shell reads disagree, which is the exact
+#: failure ``shell_home`` was written to avoid. Not ``CAPAUTH_HOME``: that one
+#: points at ``<skcapstone home>/capauth``, one level DOWN from this root.
+SKCAPSTONE_HOME_ENV = "SKCAPSTONE_HOME"
+
 
 def default_base_dir() -> Path:
-    """The real storage root (``~/.skcapstone``). Tests inject their own."""
+    """The storage root: ``$SKCAPSTONE_HOME`` if set, else ``~/.skcapstone``.
+
+    Precedence (identical to :func:`capauth.manifest.shell_home`):
+
+    1. ``$SKCAPSTONE_HOME`` when set and non-empty;
+    2. ``~/.skcapstone``.
+
+    An EMPTY or whitespace-only value falls back to the default rather than
+    resolving to the process's cwd, so a unit file that exports the variable
+    unset does not silently reroot every store into whatever directory a
+    service happened to start in. Unset behaviour is byte-identical to before
+    this override existed; tests still inject their own root via ``base_dir=``,
+    which outranks both.
+
+    .. warning::
+
+       **This moves the PAIRING STORE, not just the identity you were aiming
+       at.** This one function locates *everything* capauth keeps under the
+       skcapstone home: the peer registry and its device sidecars
+       (``<root>/peers/``), pending enrollments
+       (``<root>/pairing/enrollments/``), identity-class assignments, and the
+       capability-token store that :func:`capauth.authz.decide` reads.
+
+       So a node pointed at a new home starts with an EMPTY device store. Every
+       subject enrolled under the old home is unknown there, and ``decide()``
+       will deny it for "no enrolled device" until it is enrolled again against
+       the new root. Nothing here migrates, merges, or falls back to the
+       previous location: whether two homes should be reconciled is a separate
+       decision, and a silent merge is how one node's device population
+       quietly becomes another's.
+
+       Set this only on a node that is meant to operate as that home in full
+       (the signing-failover case: a node that legitimately holds a per-agent
+       key and needs capauth to sign as it), and expect to re-enroll there.
+
+    Returns:
+        Path: The resolved skcapstone home.
+    """
+    env = os.environ.get(SKCAPSTONE_HOME_ENV, "").strip()
+    if env:
+        return Path(env).expanduser()
     return Path.home() / ".skcapstone"
 
 
@@ -315,6 +369,7 @@ __all__ = [
     "PairingStore",
     "SIDECAR_VERSION",
     "SIDECAR_KEY",
+    "SKCAPSTONE_HOME_ENV",
     "default_base_dir",
     "fingerprint_for",
 ]
