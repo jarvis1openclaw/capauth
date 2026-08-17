@@ -173,6 +173,36 @@ def _is_pgp(key: Optional[str]) -> bool:
     return "BEGIN PGP" in (key or "")
 
 
+def _require_subject(subject: Optional[str]) -> str:
+    """Reject an absent or blank subject, loudly, at the call.
+
+    ``subject`` is a REQUIRED keyword on every public builder here, but a caller
+    can still hand us ``None`` at runtime (an Optional threaded down from its own
+    config, a dict lookup that missed). Falling back to a derived default there
+    is the one thing this module must never do.
+
+    Why: the challenge binds the subject, so a proof built for subject A does not
+    verify for subject B. If the builder quietly substituted its own default
+    while ``enroll_device`` was called with the caller's real subject, the device
+    would sign honestly, capauth would reject the proof, and the enrollment would
+    land on the TOFU floor behind a success response with nothing raised. That is
+    exactly the silent downgrade card N10 exists to remove.
+
+    This bit for real: capauth's derived default is the full 40-char
+    ``fingerprint_for`` value, while skchat's own derivation is a 16-char device
+    id. Two individually reasonable defaults, different signed bytes, and the
+    mismatch is invisible until the security boundary rejects it. Caught in
+    review by clawd-43 on 2026-08-17 before it shipped to a caller.
+    """
+    if subject is None or not str(subject).strip():
+        raise ProofSigningError(
+            "subject is required: the enrollment challenge binds it, so it must be "
+            "the SAME subject you pass to enroll_device(). Deriving one here would "
+            "silently change the signed bytes and downgrade the enrollment to tofu."
+        )
+    return str(subject)
+
+
 def _resolve_subject(pubkey: str, subject: Optional[str]) -> tuple[str, str]:
     """Derive ``(fingerprint, canonical_subject)`` exactly as ``enroll_device`` will.
 
@@ -208,7 +238,7 @@ def _coerce_mode(mode: EnrollmentMode | str) -> EnrollmentMode:
 def enrollment_challenge(
     pubkey: str,
     *,
-    subject: Optional[str] = None,
+    subject: str,
     mode: EnrollmentMode | str = EnrollmentMode.VERIFIED,
 ) -> bytes:
     """The exact bytes an enrollment's proof must sign, from the PUBLIC key alone.
@@ -245,7 +275,7 @@ def enrollment_challenge(
         PairingError: If ``mode`` is not a known enrollment mode.
     """
     resolved = _coerce_mode(mode)
-    fingerprint, canonical = _resolve_subject(pubkey, subject)
+    fingerprint, canonical = _resolve_subject(pubkey, _require_subject(subject))
     if resolved is EnrollmentMode.ATTESTED:
         return attested_challenge(fingerprint, canonical)
     if resolved is EnrollmentMode.VERIFIED:
@@ -340,8 +370,8 @@ def build_verified_proof(
     pubkey: str,
     *,
     private_key: Any,
+    subject: str,
     passphrase: str = "",
-    subject: Optional[str] = None,
 ) -> EnrollmentProof:
     """Sign the ``verified`` enrollment challenge with the device's OWN key.
 
@@ -379,7 +409,7 @@ def build_verified_proof(
         capauth.exceptions.SubjectNamingError: If ``subject`` does not conform
             to the canonical fqid grammar even after alias translation.
     """
-    fingerprint, canonical = _resolve_subject(pubkey, subject)
+    fingerprint, canonical = _resolve_subject(pubkey, _require_subject(subject))
     challenge = verified_challenge(fingerprint, canonical)
     signature = _sign(challenge, private_key, passphrase, pgp=_is_pgp(pubkey))
     _self_check(pubkey, signature, challenge, what="verified proof")
@@ -398,8 +428,8 @@ def build_attested_proof(
     *,
     operator_pubkey: str,
     operator_private_key: Any,
+    subject: str,
     passphrase: str = "",
-    subject: Optional[str] = None,
 ) -> EnrollmentProof:
     """Sign the ``attested`` challenge with a VOUCHING OPERATOR's key.
 
@@ -440,7 +470,7 @@ def build_attested_proof(
         capauth.exceptions.SubjectNamingError: If ``subject`` does not conform
             to the canonical fqid grammar even after alias translation.
     """
-    fingerprint, canonical = _resolve_subject(pubkey, subject)
+    fingerprint, canonical = _resolve_subject(pubkey, _require_subject(subject))
     challenge = attested_challenge(fingerprint, canonical)
     signature = _sign(challenge, operator_private_key, passphrase, pgp=_is_pgp(operator_pubkey))
     _self_check(operator_pubkey, signature, challenge, what="attestation")
