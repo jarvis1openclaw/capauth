@@ -50,6 +50,51 @@ All notable changes to `capauth` are documented here. The format is based on
 
 ### Fixed
 
+- **An unreadable coordination projection rendered identically to an agent with
+  no collaborators** (coord card `49e9b427`).
+  `capauth.trust.graph._add_coord_agents` reads
+  `~/.skcapstone/coordination/agents/*.json`, a rebuildable PROJECTION of the
+  coordination board, and turns `len(completed_tasks)` into a trust edge weight
+  via `0.3 + 0.05n`. It continued past `json.JSONDecodeError` and `OSError` per
+  file, and skdashboard collapses any exception out of `build_trust_graph` into
+  an empty graph, so a projection that could not be read at all produced zero
+  coord edges, no warning, and the same picture in every output format as a
+  healthy agent that simply has no collaborators. Per-file tolerance is kept (one
+  corrupt file must not blank the trust web), but the failures are now counted
+  and reported:
+  - `capauth.trust.SourceHealth`, a new exported record on `TrustGraph`, with
+    statuses `ok` / `absent` / `degraded` / `unreadable`, file counts, the source
+    path, and a bounded sample of the read errors. `TrustGraph.warnings()` is
+    empty only when every instrumented source was read in full, so an absent edge
+    can once again be read as an absent relationship.
+  - `format_json` gains `sources`, `warnings` and `complete` (this is the dict
+    skdashboard's trust panel already parses), `format_table` gains a Sources
+    section plus an explicit incomplete-graph warning, and `format_dot` draws a
+    red node for a degraded source so a rendered image shows the gap instead of
+    just being smaller.
+  - A JSON payload that parses but is not an object (an error page, an array, a
+    bare `null`) now counts as a failed file. Previously it raised an uncaught
+    `AttributeError` out of `build_trust_graph`, which the caller turned into an
+    empty graph.
+  - The directory listing uses `iterdir` rather than `glob`, because `glob`
+    swallows a `PermissionError` on the directory and returns nothing, reporting
+    an unreadable store as an empty one.
+  - Coord edges now carry `source`, `corroborated: False` and `tasks_claimed`
+    metadata, and the read carries a `# PROJECTION-OK:` marker whose
+    justification is conditional on a verified property: `TrustEdge.strength` is
+    consumed only by renderers (DOT `penwidth`, the ASCII bar, skdashboard's
+    stroke width), never by an authorization path.
+
+  Trust SEMANTICS are unchanged on purpose. The audit (188 of 1,683 claimed
+  completions backed by no store, identity fields describing the rebuilder,
+  Syncthing conflict resolution losing completions in one direction, and no
+  representation of the board's `review` column) and the recommendation to stop
+  deriving a weight from a completion count are in
+  `docs/TRUST_GRAPH_COORD_PROJECTION.md`, for the repo owner to decide. The
+  `0.3 + 0.05n` curve is now named (`COORD_BASE_STRENGTH`,
+  `COORD_STRENGTH_PER_TASK`, `COORD_SATURATION_TASKS = 14`) and locked by a test
+  so any future change to it is deliberate.
+
 - **`verified` enrollment was unprovable for WebCrypto device keys**
   (`inc-c72a9120`). N10's proof check was correct but PGP-only: it verified
   `proof` solely through `capauth.crypto`'s armored-signature backend, while
