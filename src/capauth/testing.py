@@ -101,19 +101,47 @@ WITHOUT this stub.
 
 Adopting it downstream
 ----------------------
-One line in the consuming repo's ``tests/conftest.py`` turns it on for every
-test under that directory::
-
-    from capauth.testing import capauth_signing_stub  # noqa: F401
-
-Or, to opt in per test / per module instead of directory-wide, request the
-non-autouse fixture::
+**Prefer the scoped form.** Apply it to the specific modules that fail without
+it, and read that list out of the CI log rather than guessing::
 
     from capauth.testing import stub_token_signing  # noqa: F401
 
     pytestmark = pytest.mark.usefixtures("stub_token_signing")
 
 Outside pytest entirely, :func:`signing_stub` is a plain context manager.
+
+There is also a directory-wide autouse form, one line in the consuming repo's
+``tests/conftest.py``::
+
+    from capauth.testing import capauth_signing_stub  # noqa: F401
+
+.. warning::
+
+   The directory-wide form silently converts real-gpg coverage into stub
+   coverage. If any test under that directory generates a real key and signs end
+   to end, the stub takes over the boundary it exists to exercise. That test
+   keeps passing while no longer testing the thing it was written for, and
+   nobody re-reads a green test.
+
+   This is not hypothetical. It was caught in review during skchat's adoption on
+   2026-08-16: a directory-wide conftest import would have reached
+   ``test_dataplane_audience_token.py`` and ``test_audience_mint_endpoint.py``,
+   both of which generate a real ephemeral key and sign for real. They were
+   scoped per module instead, and both real-gpg files were then verified to
+   contain zero references to this module.
+
+   Note the asymmetry that makes this worth a warning rather than a footnote.
+   The failure this module fixes is LOUD: signing raises, CI shows errors, and
+   someone investigates. Over-applying it fails QUIETLY: the suite stays green
+   and the loss shows up only when the real signing path breaks in production
+   with nothing red to warn you.
+
+   So before using the directory-wide form, grep the tree for tests that touch
+   real gpg (a generated keyring, ``GNUPGHOME``, a real ``issue_token`` without
+   this stub) and confirm none sit under it. CapAuth's own suite deliberately
+   does NOT use the autouse form in ``tests/conftest.py`` for exactly this
+   reason: ``tests/test_authz_signature_gate.py`` must keep running against real
+   gpg.
 
 Why this cannot be switched on by accident in a deployed process
 ----------------------------------------------------------------
@@ -277,9 +305,20 @@ def capauth_signing_stub(monkeypatch: pytest.MonkeyPatch) -> Callable[[bytes], s
         from capauth.testing import capauth_signing_stub  # noqa: F401
 
     That is the intended shape for a repo whose tests mint CapAuth tokens
-    throughout and are not themselves about OpenPGP. A repo with even one test
-    that asserts real signing behaviour should import
-    :data:`stub_token_signing` instead and request it explicitly, so the stub is
-    never active where the real gpg path is what is under test.
+    throughout and are not themselves about OpenPGP.
+
+    .. warning::
+
+       Check before reaching for this. A repo with even one test that asserts
+       real signing behaviour must import :data:`stub_token_signing` instead and
+       request it per module, so the stub is never active where the real gpg
+       path is what is under test.
+
+       Over-applying this fixture fails silently: the affected tests keep
+       passing while quietly exercising the stub instead of gpg. Contrast the
+       problem it solves, which fails loudly with visible errors. Green is not
+       evidence here, so grep for real-gpg tests under the target directory
+       first. skchat's adoption caught exactly this in review; see the module
+       docstring.
     """
     return install_signing_stub(monkeypatch)
