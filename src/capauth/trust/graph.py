@@ -727,8 +727,8 @@ def format_table(graph: TrustGraph) -> str:
     warnings = graph.warnings()
     if warnings:
         lines.append("")
-        lines.append("WARNING: this graph is INCOMPLETE. Missing edges below do not")
-        lines.append("mean 'no relationship'. They mean 'not known'.")
+        lines.append("WARNING: this graph is INCOMPLETE. An edge missing from the list")
+        lines.append("above does not mean 'no relationship'. It means 'not known'.")
         for w in warnings:
             lines.append(f"  {w}")
 
