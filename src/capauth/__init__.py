@@ -219,7 +219,8 @@ __all__ = [
 # distribution metadata instead, so this attribute can only ever agree with what
 # pip actually resolved.
 try:  # pragma: no cover - trivial, and the fallback is exercised below
-    from importlib.metadata import PackageNotFoundError, version as _dist_version
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _dist_version
 
     __version__ = _dist_version("capauth")
 except PackageNotFoundError:  # running from a source tree with no install
