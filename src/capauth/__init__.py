@@ -91,6 +91,7 @@ from .trust import (
     CALIBRATION_FILENAME,
     DEFAULT_THRESHOLDS,
     FORMATTERS,
+    SourceHealth,
     TrustEdge,
     TrustGraph,
     TrustNode,
@@ -191,6 +192,7 @@ __all__ = [
     "has_scope",
     # trust (kernel track M1: moved verbatim from skcapstone)
     "FORMATTERS",
+    "SourceHealth",
     "CALIBRATION_FILENAME",
     "DEFAULT_THRESHOLDS",
     "TrustEdge",
