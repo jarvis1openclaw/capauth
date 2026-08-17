@@ -155,10 +155,22 @@ def test_attested_proof_round_trips_through_enroll_device(tmp_path):
 
 
 def test_helper_defaults_subject_to_the_device_fingerprint_like_enroll_device(tmp_path):
-    """Omitting ``subject`` on both sides still agrees: both derive device:<fp>."""
+    """An EXPLICIT subject on both sides agrees end to end.
+
+    This test used to omit ``subject`` and rely on the builder and
+    ``enroll_device`` deriving the same default. That default was removed: two
+    individually reasonable defaults (capauth's 40-char fingerprint, skchat's
+    16-char device id) produce different signed bytes, and the mismatch is
+    invisible until the security boundary rejects it. The subject is now
+    required, so the agreement is asserted rather than assumed.
+    """
     bundle = _pgp_keypair()
+    subject = fingerprint_for(bundle.public_armor)
     proof = build_verified_proof(
-        bundle.public_armor, private_key=bundle.private_armor, passphrase=TEST_PASSPHRASE
+        bundle.public_armor,
+        private_key=bundle.private_armor,
+        subject=subject,
+        passphrase=TEST_PASSPHRASE,
     )
 
     enrollment = enroll_device(
@@ -412,11 +424,19 @@ def test_building_with_a_WRONG_PASSPHRASE_raises():
 def test_building_with_a_NON_KEY_raises_rather_than_returning_an_empty_proof():
     bundle = _pgp_keypair()
     with pytest.raises(ProofSigningError):
-        build_verified_proof(bundle.public_armor, private_key="not a key at all")
+        build_verified_proof(
+            bundle.public_armor,
+            private_key="not a key at all",
+            subject=fingerprint_for(bundle.public_armor),
+        )
 
     pubkey_b64, _ = _device_keypair()
     with pytest.raises(ProofSigningError):
-        build_verified_proof(pubkey_b64, private_key=b"-----BEGIN PRIVATE KEY-----\nnope\n")
+        build_verified_proof(
+            pubkey_b64,
+            private_key=b"-----BEGIN PRIVATE KEY-----\nnope\n",
+            subject=fingerprint_for(pubkey_b64),
+        )
 
 
 def test_a_built_proof_is_never_empty():
@@ -430,3 +450,65 @@ def test_a_built_proof_is_never_empty():
     assert proof.proof
     assert dict(proof) == {"proof": proof.proof}
     assert "operator_pubkey" not in dict(proof)
+
+
+# --- subject is REQUIRED (regression: two reasonable defaults, different bytes) ---
+
+
+def test_subject_is_required_on_every_public_builder():
+    """A derived default here silently changes the SIGNED BYTES.
+
+    capauth's own default was the full 40-char `fingerprint_for` value. skchat,
+    the helper's first caller, derives a 16-char device id. Both defensible in
+    isolation. But a proof built with capauth's default, then handed to
+    `enroll_device` with skchat's real subject, does not verify: the device signs
+    honestly, capauth rejects, and the enrollment lands on the TOFU floor behind
+    a success response with nothing raised. That is the exact silent downgrade
+    card N10 exists to remove, reintroduced by the convenience meant to close it.
+
+    Caught in review by clawd-43 on 2026-08-17, before any caller shipped it.
+    """
+    bundle = _pgp_keypair()
+
+    for call in (
+        lambda: enrollment_challenge(bundle.public_armor),
+        lambda: build_verified_proof(
+            bundle.public_armor,
+            private_key=bundle.private_armor,
+            passphrase=TEST_PASSPHRASE,
+        ),
+    ):
+        with pytest.raises(TypeError, match="subject"):
+            call()
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_an_explicitly_blank_subject_raises_rather_than_deriving_one(blank):
+    """The signature makes it required; this makes a runtime None fail too.
+
+    A caller can still thread an Optional down from its own config and hand us
+    None. Falling back to a derived default there is the failure this module
+    must never have.
+    """
+    bundle = _pgp_keypair()
+
+    with pytest.raises(ProofSigningError, match="subject is required"):
+        enrollment_challenge(bundle.public_armor, subject=blank)
+
+    with pytest.raises(ProofSigningError, match="subject is required"):
+        build_verified_proof(
+            bundle.public_armor,
+            private_key=bundle.private_armor,
+            subject=blank,
+            passphrase=TEST_PASSPHRASE,
+        )
+
+
+def test_two_different_subjects_produce_different_challenges():
+    """The property the whole guard exists to protect, asserted directly."""
+    bundle = _pgp_keypair()
+    full = fingerprint_for(bundle.public_armor)
+
+    assert enrollment_challenge(bundle.public_armor, subject=full) != enrollment_challenge(
+        bundle.public_armor, subject=full[:16]
+    ), "challenge must bind the subject, or a subject mismatch would go unnoticed"
