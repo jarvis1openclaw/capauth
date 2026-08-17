@@ -6,6 +6,16 @@ All notable changes to `capauth` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Identity docstrings taught the wrong fqid shape.** `agent_identity.py`
+  showed `lumina@chef.skworld` in its prose, its worked example and its
+  doctest: the missing-TLD form that the N5 store migration exists to correct.
+  Verified against the live resolver, which returns `lumina@chef.skworld.io`.
+  A wrong example in the module that defines identity is what the next reader
+  or agent copies. `subject.py` deliberately keeps its legacy examples, since
+  they document the shapes the alias table normalizes.
+
 ### Added
 
 - **`capauth.pairing.proof`: a supported way to BUILD the enrollment proof card
