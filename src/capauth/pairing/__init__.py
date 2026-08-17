@@ -66,6 +66,13 @@ from .operator_session import (
     verify_device_signature,
     verify_operator_session,
 )
+from .proof import (
+    EnrollmentProof,
+    ProofSigningError,
+    build_attested_proof,
+    build_verified_proof,
+    enrollment_challenge,
+)
 from .records import (
     MODE_SEVERITY,
     DeviceRecord,
@@ -77,6 +84,7 @@ from .records import (
 from .store import (
     SIDECAR_KEY,
     SIDECAR_VERSION,
+    SKCAPSTONE_HOME_ENV,
     PairingStore,
     default_base_dir,
     fingerprint_for,
@@ -93,6 +101,12 @@ __all__ = [
     "PairingError",
     "verified_challenge",
     "attested_challenge",
+    # supported proof construction (the constructor for the N10 requirement)
+    "build_verified_proof",
+    "build_attested_proof",
+    "enrollment_challenge",
+    "EnrollmentProof",
+    "ProofSigningError",
     # records + modes
     "EnrollmentMode",
     "Enrollment",
@@ -106,6 +120,7 @@ __all__ = [
     "PairingStore",
     "SIDECAR_KEY",
     "SIDECAR_VERSION",
+    "SKCAPSTONE_HOME_ENV",
     "default_base_dir",
     "fingerprint_for",
     # canonical-subject rewrite (card N5)

@@ -8,6 +8,68 @@ All notable changes to `capauth` are documented here. The format is based on
 
 ### Added
 
+- **`capauth.pairing.proof`: a supported way to BUILD the enrollment proof card
+  N10 made mandatory.** `83c1fa2` made `proof` required for `verified` and
+  `operator_pubkey` + `attestation` required for `attested`, but shipped the
+  requirement with no supported constructor. A downstream had to reconstruct the
+  challenge from capauth's source (derive the fingerprint with
+  `fingerprint_for`, canonicalize the subject with `canonical_subject`, assemble
+  `verified_challenge` over exactly those two) and get all three right, or emit a
+  signature that fails identically to a forged one. skchat did it by hand, with a
+  comment saying "capauth has no public helper for this today; if it grows one,
+  delete this and call it."
+  - `build_verified_proof(pubkey, *, private_key, passphrase="", subject=None)` —
+    signs the `verified` challenge with the device's OWN key.
+  - `build_attested_proof(pubkey, *, operator_pubkey, operator_private_key,
+    passphrase="", subject=None)` — an operator vouching for a device it does not
+    hold the private key of.
+  - `enrollment_challenge(pubkey, *, subject=None, mode="verified")` — the
+    challenge bytes derived from the PUBLIC key alone. No secret is involved and
+    none is disclosed, so a server can hand these to a client whose WebCrypto
+    device key is non-extractable and let it sign them.
+  - `EnrollmentProof` — frozen, and implements the mapping protocol, so it
+    splats into `enroll_device` with no massaging:
+    `enroll_device(pub, scopes, mode="verified", subject=subj, **proof)`. It
+    yields only the evidence kwargs the claimed mode requires, never both sets.
+  - `ProofSigningError(PairingError)` — signing failure RAISES, in the same
+    spirit as `TokenSigningError`. An unsigned or empty proof is never returned.
+  - **It is a constructor, not a bypass.** The verifier is untouched, and is in
+    fact called on this module's own output before that output is returned (the
+    round trip is a structural property, not a hope). Every function signs with a
+    private key the CALLER supplies: presenting a proof for a key you do not
+    control is impossible by construction, because the signature IS the proof.
+    The signing branch is chosen from the device public key alone, using the same
+    `"BEGIN PGP" in key` discriminator `_proof_verifies` uses, so a caller can
+    never pick a weaker verifier for itself. Both PGP-armored keys and skchat's
+    base64 DER SPKI ECDSA P-256 device keys are supported.
+  - Negative controls in `tests/test_enrollment_proof_helper.py` pin that a proof
+    over the wrong subject, over the wrong fingerprint, signed by a different
+    key, replayed across the verified/attested domain separation, or simply
+    absent is STILL refused by the real `enroll_device`. They were verified to
+    catch a real regression by deliberately loosening the check and observing
+    them go red.
+
+- **`$SKCAPSTONE_HOME` now overrides `capauth.pairing.store.default_base_dir()`.**
+  The root was hardcoded to `~/.skcapstone` with no override, so a node that
+  legitimately holds a per-agent key but whose flat
+  `~/.skcapstone/identity/identity.json` declares a different key had no
+  supported way to point capauth at a home it can actually sign from. Precedence
+  matches the `capauth.manifest.shell_home` idiom already in this repo: explicit
+  `base_dir=` (unchanged, still wins), then `$SKCAPSTONE_HOME` when set and
+  non-empty, then `~/.skcapstone`. An empty or whitespace-only value falls back
+  to the default rather than resolving against the cwd. Exported as
+  `capauth.pairing.SKCAPSTONE_HOME_ENV`.
+  - With the variable unset, behaviour is unchanged in every respect.
+  - ⚠ **Setting it moves the PAIRING STORE, not just the identity.** The same
+    function locates the peer registry and its device sidecars, pending
+    enrollments, identity-class assignments, and the capability-token store
+    `decide()` reads. A node pointed at a new home starts with an EMPTY device
+    store and will deny every subject enrolled in the old one for "no enrolled
+    device" until it is re-enrolled there. Nothing migrates, merges, or falls
+    back to the previous location: whether two homes should be reconciled is a
+    separate decision, and a silent merge is how one node's device population
+    quietly becomes another's.
+
 - **`capauth.testing`: the gpg signing test seam, promoted from `tests/conftest.py`
   into shipped, importable code.** Since `0d412ab`, `issue_token` and
   `mint_audience_token` RAISE rather than storing an unsigned token, and
