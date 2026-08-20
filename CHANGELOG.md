@@ -25,6 +25,22 @@ All notable changes to `capauth` are documented here. The format is based on
 
 ### Added
 
+- **A strict reusable delegated capability-chain contract.**
+  `capauth.delegated` adds a versioned request-local transport, complete-chain
+  verification, bounded monotonic attenuation, current issuer and principal
+  policy checks for every chain member, ancestor and leaf revocation, atomic
+  one-use replay reservation, and exact-scope sanitized decisions. Recursive
+  duplicate JSON members, unknown fields, ambiguous envelopes, missing or
+  reordered ancestors, over-depth chains, broadened children, stale principals,
+  untrusted issuers, revoked credentials, expired credentials, and replay all
+  fail closed. Expiry and current-state snapshots are refreshed after signature,
+  replay, and durable audit work before allow. Any policy revision change during
+  audit denies and requires a fresh invocation. Production storage remains application supplied;
+  included in-memory backends are explicitly limited to tests and isolated local
+  development. Raw credentials and signature bytes are redacted from values,
+  decisions, audit records, and chained exceptions. See
+  `docs/DELEGATED_CAPABILITIES.md`.
+
 - **`capauth.pairing.proof`: a supported way to BUILD the enrollment proof card
   N10 made mandatory.** `83c1fa2` made `proof` required for `verified` and
   `operator_pubkey` + `attestation` required for `attested`, but shipped the

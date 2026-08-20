@@ -135,6 +135,7 @@ all Syncthing mesh nodes so every host shares one keypair.
 | **Verification service** | A FastAPI service that turns a signed challenge into OIDC claims — passwordless PGP login for any OIDC app (`capauth-service`) |
 | **Peer mesh** | Discover and verify sovereign peers over mDNS, shared filesystem, and Syncthing — no servers (`capauth mesh`, `discover`, `peers`) |
 | **PMA membership** | Fiducia Communitatis — PGP-signed, steward-countersigned membership claims (`capauth pma request/approve/verify/revoke`) |
+| **Delegated capabilities** | Strict complete-chain validation with current issuer, principal, revocation, replay, attenuation, exact-scope, and sanitized-decision interfaces (`capauth.delegated`) |
 | **Org registry** | Register with a sovereign org; emits a signed registry entry + PMA request (`capauth register`) |
 | **Integration generators** | One-shot config for third-party login, e.g. Forgejo OAuth2/OIDC (`capauth setup forgejo`) |
 | **skcapstone adapter** | Default-on-by-presence: routes auth events to `sk-alert`, registers a key-rotation check with `skscheduler` |
@@ -221,6 +222,7 @@ rides in the payload `event` field so routing stays severity-based.
 | **[Crypto Spec](docs/CRYPTO_SPEC.md)** | PGP implementation, key management, challenge-response details |
 | **[Protocol](docs/PROTOCOL.md)** | the CapAuth wire protocol specification |
 | **[Claims](docs/CLAIMS.md)** | capability claims and token format |
+| **[Strict delegated capabilities](docs/DELEGATED_CAPABILITIES.md)** | versioned chain transport, verification invariants, backend contracts, and application composition |
 | **[Integration Blueprint](docs/INTEGRATION_BLUEPRINT.md)** | third-party integration guide |
 | **[Cold-Machine Bootstrap & DR](docs/COLD_MACHINE_BOOTSTRAP_AND_DR.md)** | standing capauth back up on a blank box + disaster recovery: the restore-not-regenerate rule, the ordered restore chain, and the operator checklist |
 | **[authentik-capauth](docs/authentik-capauth.md)** | the custom Authentik image with the CapAuth PGP stage baked in — build (`AK_VERSION`, version-agnostic venv install, frontend rebuild), SKStacks deploy + `lifecycle.migrate` override, and the four build/migrate gotchas |
