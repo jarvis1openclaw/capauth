@@ -346,6 +346,25 @@ capauth manifest sign | verify | list        # signed module manifests
 capauth token mint-audience ...              # mint an audience-scoped token
 ```
 
+### Authorization token incident check
+
+`capauth.authz.decide()` is fail-closed on token authenticity: a granting token
+must have a non-empty signature, `signature_verifies()` must succeed, it must be
+active, and its token ID must not appear in
+`$SKCAPSTONE_HOME/security/revoked-tokens.json`. Never infer trust from the
+persisted `verified` field alone. `issue_token()` must also abort before storage
+when signing fails; an unsigned compatibility token may only pass through the
+explicit, bounded legacy-grace configuration documented in `authz.py`.
+
+For an incident sweep, inventory the token payloads in
+`$SKCAPSTONE_HOME/security/tokens/`, confirm every live grant has a detached
+signature, search the revocation list for the reported token ID, and exercise
+both controls: an unsigned/tampered token is denied while a valid signed token
+is allowed. Revoke a discovered token through `capauth.tokens.revoke_token()`;
+do not delete the evidence file by hand. Preserve the test evidence from
+`tests/test_authz_signature_gate.py` and `tests/test_authz_legacy_grace.py` on
+the coordination card.
+
 > **There is NO `capauth did` command group.** Earlier revisions of this SOP and of
 > the README documented `capauth did generate` and `capauth did identity-card`; both
 > are fabrications, and running them exits non-zero with "No such command". The DID
