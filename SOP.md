@@ -402,6 +402,12 @@ Full protocol + claim/token format: [docs/PROTOCOL.md](docs/PROTOCOL.md),
 
 ## 8. Troubleshooting
 
+Human identity setup, custody recovery, rotation, signed approval, and rollback
+are governed by
+[docs/HUMAN_IDENTITY_SETUP_AND_ROTATION.md](docs/HUMAN_IDENTITY_SETUP_AND_ROTATION.md).
+The human performs all passphrase/private-key operations; automation may only
+prepare paths and verify public evidence.
+
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `capauth verify` fails on a valid peer | wrong public key / stale profile | re-`export-pubkey`; confirm fingerprint matches the DID/identity card |
@@ -486,4 +492,3 @@ checks:
   - name: ci.yml lint gate is ruff (section 4 says black is NOT a gate)
     run: grep -qF 'ruff format --check src/ tests/' .github/workflows/ci.yml
 -->
-

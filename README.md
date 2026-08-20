@@ -255,6 +255,8 @@ capauth is the identity root of SKWorld — most of the stack links back here.
   — produces the runtime crypto self-report that makes capauth's claims evidence-backed.
 - 📐 **Standards:** [sk-standards](https://github.com/smilinTux/sk-standards) — the
   crypto, data-flow, version, and doc/SOP standards (incl. `CRYPTOGRAPHY_STANDARD`).
+- 🔐 **Human key operations:**
+  [setup, recovery, rotation, approval, and rollback](docs/HUMAN_IDENTITY_SETUP_AND_ROTATION.md).
 
 ## License
 

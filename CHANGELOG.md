@@ -6,6 +6,13 @@ All notable changes to `capauth` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Documentation
+
+- Added the SK-standards-aligned human identity setup and rotation runbook,
+  covering human-only key handling, revocation certificates, protected backup
+  transfer, additive trust migration, signed CAB approval, verification,
+  rollback, evidence, and recurring custody management.
+
 ### Fixed
 
 - **Identity docstrings taught the wrong fqid shape.** `agent_identity.py`
