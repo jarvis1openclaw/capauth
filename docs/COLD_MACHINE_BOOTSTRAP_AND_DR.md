@@ -242,10 +242,10 @@ new material to the classical root or to a per-agent key.
 
 > ### STOP - REQUIRES CHEF (private key files)
 
-Restore the operator/root identity directory from the sovereign backup. This is
-the Phase-0 tarball from the ceremony doc, or the Syncthing-replicated
-`~/.capauth/` (capauth replicates the identity across mesh nodes via `capauth
-sync` / `--sync`).
+Restore the operator/root identity directory from the encrypted sovereign
+custody backup. Syncthing public-identity distribution (`capauth sync` /
+`--sync`) deliberately excludes `private.*` and `root-revocation.asc`; it is not
+a private-key recovery source.
 
 ```sh
 # from the backup tarball (created per ROOT_ROTATION_CEREMONY.md Phase 0):
@@ -256,9 +256,10 @@ capauth profile show                          # confirm entity + fingerprint
 capauth profile verify                         # PGP self-signature must verify
 ```
 
-If you replicate via Syncthing instead, let `~/.capauth/` sync in, then run the
-same two verify commands. Do **not** run `capauth init` on this machine - that
-generates a *new* keypair and would fork the operator identity.
+After restoring the private key from encrypted custody, public Syncthing state
+may fill in non-secret profile material. Run the same two verify commands. Do
+**not** run `capauth init` on this machine - that generates a *new* keypair and
+would fork the operator identity.
 
 ### Step 5 - Restore agent profiles and identity.json (do NOT mint)
 
