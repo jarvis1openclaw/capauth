@@ -45,7 +45,7 @@ flowchart TD
     INIT["capauth init<br/>--name --email --type --algorithm"] --> GEN["crypto backend generates keypair<br/>(pgpy default, or gnupg)"]
     GEN --> WRITE["write sovereign profile<br/>~/.capauth/identity/ (public + private armor)<br/>profile.json (signed)"]
     WRITE --> SYNC{"--sync?"}
-    SYNC -->|yes, Syncthing present| REPL["replicate ~/.capauth/<br/>across all mesh nodes"]
+    SYNC -->|yes, Syncthing present| REPL["distribute public identity<br/>secrets remain local"]
     SYNC -->|no| LOCAL["identity stays local"]
     WRITE --> USE["profile.json = source of truth"]
     USE --> SHOW["capauth profile show"]
@@ -273,7 +273,8 @@ flowchart LR
 | `discovery/` | Discovery backends — `file_discovery.py`, `mdns.py`, `syncthing.py` |
 | `pma.py` | PMA membership — request / approve / verify / revoke, `MembershipClaim` |
 | `registry.py` | `RegistryEntry`, sovereign org registry, `build_capauth_uri` |
-| `sync.py` | Syncthing identity replication helpers |
+| `sync.py` | Syncthing public-identity distribution with secret exclusions |
+| `estate.py` | Estate manifest, alternate-home/keyring discovery, retirement gate, evidence |
 | `integration.py` | skcapstone adapter — `alert()` (sk-alert), `ensure_schedule()` (skscheduler), `register_self()`; default-on-by-presence |
 | `apps.py` | App/service descriptor helpers |
 | `integrations/forgejo/` | Forgejo OIDC provider + auth flow + config generator |

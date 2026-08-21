@@ -120,8 +120,11 @@ capauth login https://forgejo.local           # passwordless PGP login to a serv
 ```
 
 Your keypair and profile live at `~/.capauth/` — on your machine, under your
-keys. Use `--sync` on `init` (or `capauth sync`) to replicate the identity across
-all Syncthing mesh nodes so every host shares one keypair.
+keys. Use `--sync` on `init` (or `capauth sync`) to distribute the public
+identity across Syncthing mesh nodes. CapAuth writes folder-root exclusions
+before enabling sync so private keys, root revocation certificates, keystores,
+backups, passphrases, and environment files remain local. Provision scoped
+service/node signers separately; do not use public sync as private-key recovery.
 
 ## What capauth provides
 
@@ -172,7 +175,8 @@ verification service uses).
 capauth init --name "Chef" --email "..."     # create sovereign profile (PGP keypair)
 capauth profile show | verify                 # display / verify signature integrity
 capauth export-pubkey [-o file.asc]          # export ASCII-armored public key
-capauth sync                                  # replicate ~/.capauth/ across Syncthing mesh
+capauth sync                                  # distribute public identity; keep secrets local
+capauth doctor estate --manifest estate.json # find legacy/retired/conflict key copies
 
 # Verification
 capauth verify --pubkey peer.pub.asc         # challenge-response round-trip
