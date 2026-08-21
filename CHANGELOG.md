@@ -6,6 +6,11 @@ All notable changes to `capauth` are documented here. The format is based on
 
 ## [Unreleased]
 
+- Recorded the verified 2026-08-20 Chef custody/signing ceremony and the
+  deferred passphrase-disclosure response (`da8a6401`) in the human identity
+  runbook, including the safe hidden-input pattern and honest residual-risk
+  language.
+
 ### Documentation
 
 - Added the SK-standards-aligned human identity setup and rotation runbook,

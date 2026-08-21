@@ -147,3 +147,34 @@ change ID, and verification outcome. Never record passphrases or private-key
 content. Prohibited shortcuts include agent-generated human keys, reusing an
 agent key as a person, unsigned votes, copying secrets through chat, accepting
 a mismatched backup, or deleting old identity history to make checks green.
+
+## 10. Verified 2026-08-20 Chef rotation and follow-up
+
+The governed recovery ceremony replaced the unavailable prior Chef signing key
+with fingerprint `ADAD14CCAC8D6D0BF5A4209DB994E78200BF6422`. The prior public
+identity was retained under the owner-only `retired-keys/` history, the live
+registry was updated additively, a fresh public-state backup was restore-tested,
+and `capauth doctor custody` passed. The authenticated authorization for change
+`chg-a543c87b` was consumed once and the canonical ITIL fold reported the change
+approved. The fleet `_freeze.json` and `_protected.json` plane files were then
+signed and verified against the new Chef key; signing did not unfreeze ATLAS.
+
+During the plane-signing ceremony, the passphrase was accidentally disclosed in
+terminal/chat history and briefly materialized as a plaintext filename. The file
+was securely removed, but deletion does not make a disclosed secret private
+again. Rotation was explicitly deferred by the owner and is tracked as high
+priority card `da8a6401`. Until that card closes:
+
+- never copy the disclosed value into tickets, documentation, commands, or new
+  configuration;
+- use hidden interactive input only when a governed signing ceremony is
+  unavoidable;
+- do not claim the passphrase is uncompromised; and
+- preserve the same fingerprint during passphrase-only re-protection unless a
+  full key rotation is independently required.
+
+The command anti-pattern was `echo SECRET > $CAPAUTH_PASSPHRASE`: shell
+redirection treats the expanded secret as a path, while the signer expects the
+environment variable itself to contain the secret. The supported pattern is a
+hidden prompt followed by a short-lived exported variable, immediate `unset`,
+and no shell tracing. No secret literal belongs in this runbook.
