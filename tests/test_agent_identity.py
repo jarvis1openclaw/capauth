@@ -27,6 +27,22 @@ from capauth.agent_identity import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_live_cluster(tmp_path: Path, monkeypatch):
+    """Isolate every test from the host's real cluster.json.
+
+    ``resolve_agent_identity`` reads ``/etc/skcapstone/cluster.json`` and
+    ``~/.skcapstone/cluster.json`` by default; tests must never observe live
+    operator/realm state. Tests that exercise cluster loading override
+    ``_CLUSTER_LOOKUP`` themselves with their own tmp fixtures.
+    """
+    from capauth import agent_identity
+
+    monkeypatch.setattr(
+        agent_identity, "_CLUSTER_LOOKUP", [tmp_path / "no-live-cluster.json"]
+    )
+
+
 # ---------------------------------------------------------------------------
 # AgentIdentity dataclass
 # ---------------------------------------------------------------------------
@@ -41,7 +57,7 @@ class TestAgentIdentity:
         ident = AgentIdentity(
             agent="lumina",
             capauth_uri="capauth:lumina@skworld.io",
-            fqid="lumina@chef.skworld",
+            fqid="lumina@ops.example.test",
             fingerprint="AB" * 20,
         )
         d = ident.to_dict()
@@ -60,17 +76,17 @@ class TestAgentIdentity:
 
 class TestBuildFqid:
     def test_builds_from_cluster(self):
-        cluster = {"realm": "skworld", "operator": "chef"}
-        assert _build_fqid("lumina", cluster) == "lumina@chef.skworld"
+        cluster = {"realm": "example.test", "operator": "ops"}
+        assert _build_fqid("agent", cluster) == "agent@ops.example.test"
 
     def test_none_when_cluster_none(self):
-        assert _build_fqid("lumina", None) is None
+        assert _build_fqid("agent", None) is None
 
     def test_none_when_realm_missing(self):
-        assert _build_fqid("lumina", {"operator": "chef"}) is None
+        assert _build_fqid("agent", {"operator": "ops"}) is None
 
     def test_none_when_operator_missing(self):
-        assert _build_fqid("lumina", {"realm": "skworld"}) is None
+        assert _build_fqid("agent", {"realm": "example.test"}) is None
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +97,9 @@ class TestBuildFqid:
 class TestLoadCluster:
     def test_loads_from_tmp(self, tmp_path: Path):
         cluster_file = tmp_path / "cluster.json"
-        cluster_file.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
+        cluster_file.write_text(
+            json.dumps({"realm": "example.test", "operator": "ops"})
+        )
         from capauth import agent_identity
 
         original = agent_identity._CLUSTER_LOOKUP
@@ -89,7 +107,7 @@ class TestLoadCluster:
             agent_identity._CLUSTER_LOOKUP = [cluster_file]
             data = _load_cluster()
             assert data is not None
-            assert data["realm"] == "skworld"
+            assert data["realm"] == "example.test"
         finally:
             agent_identity._CLUSTER_LOOKUP = original
 
@@ -117,14 +135,29 @@ class TestResolveExplicit:
 
     def test_fqid_with_cluster(self, tmp_path: Path):
         cluster_file = tmp_path / "cluster.json"
-        cluster_file.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
+        cluster_file.write_text(
+            json.dumps({"realm": "example.test", "operator": "ops"})
+        )
         from capauth import agent_identity
 
         original = agent_identity._CLUSTER_LOOKUP
         try:
             agent_identity._CLUSTER_LOOKUP = [cluster_file]
-            ident = resolve_agent_identity("lumina")
-            assert ident.fqid == "lumina@chef.skworld"
+            ident = resolve_agent_identity("agent")
+            assert ident.fqid == "agent@ops.example.test"
+        finally:
+            agent_identity._CLUSTER_LOOKUP = original
+
+    def test_fqid_none_when_cluster_malformed(self, tmp_path: Path):
+        """A corrupt cluster.json yields fqid=None, never a fabricated value."""
+        bad = tmp_path / "cluster.json"
+        bad.write_text("{ not: valid json,,,")
+        from capauth import agent_identity
+
+        original = agent_identity._CLUSTER_LOOKUP
+        try:
+            agent_identity._CLUSTER_LOOKUP = [bad]
+            assert resolve_agent_identity("agent").fqid is None
         finally:
             agent_identity._CLUSTER_LOOKUP = original
 
@@ -266,14 +299,14 @@ class TestLoadClusterEdges:
         """Lookup honours search-path order: the first existing file is used."""
         first = tmp_path / "first.json"
         second = tmp_path / "second.json"
-        first.write_text(json.dumps({"realm": "alpha", "operator": "chef"}))
-        second.write_text(json.dumps({"realm": "beta", "operator": "chef"}))
+        first.write_text(json.dumps({"realm": "alpha.test", "operator": "ops"}))
+        second.write_text(json.dumps({"realm": "beta.test", "operator": "ops"}))
         from capauth import agent_identity
 
         original = agent_identity._CLUSTER_LOOKUP
         try:
             agent_identity._CLUSTER_LOOKUP = [first, second]
-            assert _load_cluster()["realm"] == "alpha"
+            assert _load_cluster()["realm"] == "alpha.test"
         finally:
             agent_identity._CLUSTER_LOOKUP = original
 
@@ -281,13 +314,13 @@ class TestLoadClusterEdges:
         """A missing first path is skipped; the next existing one is loaded."""
         missing = tmp_path / "nope.json"
         present = tmp_path / "present.json"
-        present.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
+        present.write_text(json.dumps({"realm": "example.test", "operator": "ops"}))
         from capauth import agent_identity
 
         original = agent_identity._CLUSTER_LOOKUP
         try:
             agent_identity._CLUSTER_LOOKUP = [missing, present]
-            assert _load_cluster()["operator"] == "chef"
+            assert _load_cluster()["operator"] == "ops"
         finally:
             agent_identity._CLUSTER_LOOKUP = original
 
@@ -297,20 +330,28 @@ class TestBuildFqidEdges:
         """An empty realm string is treated as missing → None (no `agent@op.`)."""
         from capauth.agent_identity import _build_fqid
 
-        assert _build_fqid("lumina", {"realm": "", "operator": "chef"}) is None
+        assert _build_fqid("agent", {"realm": "", "operator": "ops"}) is None
 
     def test_empty_string_operator_is_falsy_none(self):
         from capauth.agent_identity import _build_fqid
 
-        assert _build_fqid("lumina", {"realm": "skworld", "operator": ""}) is None
+        assert _build_fqid("agent", {"realm": "example.test", "operator": ""}) is None
 
     def test_agent_name_embedded(self):
         from capauth.agent_identity import _build_fqid
 
         assert (
-            _build_fqid("jarvis", {"realm": "skworld", "operator": "chef"})
-            == "jarvis@chef.skworld"
+            _build_fqid("jarvis", {"realm": "example.test", "operator": "ops"})
+            == "jarvis@ops.example.test"
         )
+
+    def test_arbitrary_cluster_values(self):
+        """Any operator/realm pair flows through verbatim — no deployment
+        assumptions baked into the builder."""
+        from capauth.agent_identity import _build_fqid
+
+        cluster = {"realm": "example.test", "operator": "fleet9"}
+        assert _build_fqid("worker", cluster) == "worker@fleet9.example.test"
 
 
 class TestAgentCapauthDir:
@@ -408,7 +449,9 @@ class TestResolveDualUri:
         from capauth import agent_identity
 
         cluster_file = tmp_path / "cluster.json"
-        cluster_file.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
+        cluster_file.write_text(
+            json.dumps({"realm": "example.test", "operator": "ops"})
+        )
         capauth_dir = tmp_path / "ca"
         (capauth_dir / "identity").mkdir(parents=True)
         fp = "D" * 40
@@ -423,7 +466,7 @@ class TestResolveDualUri:
         assert d == {
             "agent": "lumina",
             "capauth_uri": "capauth:lumina@skworld.io",
-            "fqid": "lumina@chef.skworld",
+            "fqid": "lumina@ops.example.test",
             "fingerprint": fp,
         }
 

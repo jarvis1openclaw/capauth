@@ -18,7 +18,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from . import __version__
+from . import __version__, resolve_capauth_home
 from .exceptions import CapAuthError
 from .models import Algorithm, CryptoBackendType, EntityType
 
@@ -82,7 +82,7 @@ def main(ctx: click.Context, capauth_home: Optional[str]) -> None:
     "--sync/--no-sync",
     "enable_sync",
     default=None,
-    help="Enable Syncthing sync for identity replication across nodes.",
+    help="Enable public identity sync; secret custody remains local.",
 )
 @click.pass_context
 def init(
@@ -100,8 +100,9 @@ def init(
     Generates a PGP keypair and initializes your CapAuth identity.
     Your keys and profile live on YOUR machine, under YOUR control.
 
-    With --sync, also configures Syncthing to replicate ~/.capauth/
-    across all nodes in your mesh so every host shares one identity.
+    With --sync, also configures Syncthing to distribute public identity
+    material across the mesh. Private keys and revocation certificates stay
+    local.
     """
     from .profile import init_profile
 
@@ -133,7 +134,7 @@ def init(
             )
         )
 
-        # Syncthing sync — offer to replicate identity across cluster
+        # Syncthing sync — offer to distribute public identity state
         _offer_sync(profile, base, enable_sync)
 
     except CapAuthError as exc:
@@ -153,13 +154,27 @@ def _offer_sync(
         base_dir: CapAuth home directory override.
         enable_sync: True/False from --sync/--no-sync, or None to prompt.
     """
-    from .sync import is_sync_configured, is_syncthing_available, setup_syncthing_sync
+    from .sync import (
+        ensure_secret_material_ignored,
+        is_sync_configured,
+        is_syncthing_available,
+        setup_syncthing_sync,
+    )
 
     if not is_syncthing_available():
         return
 
+    capauth_path = base_dir or Path(profile.storage.primary)
     if is_sync_configured():
-        console.print("  [green]✓[/] Syncthing sync already configured for identity")
+        try:
+            ensure_secret_material_ignored(capauth_path)
+        except OSError as exc:
+            console.print(f"  [red]✗[/] Cannot enforce sync custody boundary: {exc}")
+            raise SystemExit(1)
+        console.print(
+            "  [green]✓[/] Syncthing public identity sync is configured; "
+            "secret exclusions verified"
+        )
         return
 
     if enable_sync is None:
@@ -167,11 +182,11 @@ def _offer_sync(
         console.print()
         console.print(
             "  [bold cyan]Cluster Sync[/] — Syncthing detected.\n"
-            "  Replicate this identity across all mesh nodes so every\n"
-            "  host shares one PGP keypair. Recommended for clusters.\n"
+            "  Distribute the public profile across mesh nodes while\n"
+            "  private keys and revocation certificates stay local.\n"
         )
         enable_sync = click.confirm(
-            "  Enable Syncthing sync for ~/.capauth/?",
+            "  Enable public identity sync for ~/.capauth/?",
             default=True,
         )
 
@@ -179,11 +194,11 @@ def _offer_sync(
         console.print("  [dim]Skipped — identity stays local to this node[/]")
         return
 
-    capauth_path = base_dir or Path(profile.storage.primary)
     ok = setup_syncthing_sync(capauth_dir=capauth_path)
     if ok:
         console.print(
-            "  [green]✓[/] Syncthing sync enabled — identity will replicate to all mesh nodes"
+            "  [green]✓[/] Syncthing public identity sync enabled; "
+            "private custody remains local"
         )
     else:
         console.print("  [yellow]⚠[/] Could not configure Syncthing sync — set up manually")
@@ -197,12 +212,13 @@ def _offer_sync(
 )
 @click.pass_context
 def sync_cmd(ctx: click.Context, enable: bool) -> None:
-    """Configure Syncthing sync for identity replication.
+    """Configure Syncthing public identity distribution.
 
-    Shares ~/.capauth/ across all Syncthing mesh nodes so every
-    host in the cluster uses the same PGP keypair.
+    Shares public profile material while enforcing local custody for private
+    keys, revocation certificates, keystores, backups, and passphrases.
     """
     from .sync import (
+        ensure_secret_material_ignored,
         get_known_devices,
         is_sync_configured,
         is_syncthing_available,
@@ -214,8 +230,17 @@ def sync_cmd(ctx: click.Context, enable: bool) -> None:
         console.print("[dim]Install: sudo apt install syncthing[/]")
         raise SystemExit(1)
 
+    base = ctx.obj.get("home")
+    capauth_path = Path(base) if base else None
     if is_sync_configured():
-        console.print("[green]✓[/] Syncthing sync already configured for capauth-identity")
+        try:
+            ensure_secret_material_ignored(resolve_capauth_home(capauth_path))
+        except OSError as exc:
+            console.print(f"[red]✗[/] Cannot enforce sync custody boundary: {exc}")
+            raise SystemExit(1)
+        console.print(
+            "[green]✓[/] Syncthing public identity sync configured; " "secret exclusions verified"
+        )
         devices = get_known_devices()
         console.print(f"  Sharing with {len(devices)} device(s)")
         return
@@ -224,12 +249,12 @@ def sync_cmd(ctx: click.Context, enable: bool) -> None:
         console.print("[dim]Sync not enabled.[/]")
         return
 
-    base = ctx.obj.get("home")
-    capauth_path = Path(base) if base else None
     ok = setup_syncthing_sync(capauth_dir=capauth_path)
     if ok:
         devices = get_known_devices()
-        console.print("[green]✓[/] Syncthing sync enabled for ~/.capauth/")
+        console.print(
+            "[green]✓[/] Syncthing public identity sync enabled; " "private custody remains local"
+        )
         console.print(f"  Sharing with {len(devices)} device(s)")
         console.print("  [dim]Restart Syncthing to apply: systemctl --user restart syncthing[/]")
     else:
@@ -1841,3 +1866,104 @@ def doctor_custody(ctx: click.Context, json_out: bool, max_backup_age_days: Opti
         # plain echo: statuses carry [BRACKETS] that rich would mis-parse.
         click.echo(format_report(results))
     raise SystemExit(exit_code(results))
+
+
+@doctor.command("estate")
+@click.option(
+    "--manifest",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Authoritative lifecycle manifest (default: <capauth-home>/estate.json).",
+)
+@click.option(
+    "--user-home",
+    "user_homes",
+    type=click.Path(path_type=Path, file_okay=False),
+    multiple=True,
+    help="User home to discover (repeat for alternate homes such as /home/mrarch).",
+)
+@click.option(
+    "--root",
+    "identity_roots",
+    type=click.Path(path_type=Path, file_okay=False),
+    multiple=True,
+    help="Additional identity root to scan (repeatable).",
+)
+@click.option(
+    "--syncthing-config",
+    "syncthing_configs",
+    type=click.Path(path_type=Path, dir_okay=False),
+    multiple=True,
+    help="Additional Syncthing config.xml to inspect (repeatable).",
+)
+@click.option(
+    "--gpg/--no-gpg",
+    "include_gpg",
+    default=True,
+    help="Include per-user GnuPG keyrings (default: enabled).",
+)
+@click.option(
+    "--evidence",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Atomically write the secret-free JSON evidence report to this path.",
+)
+@click.option(
+    "--json",
+    "json_out",
+    is_flag=True,
+    default=False,
+    help="Emit the report as JSON for automation.",
+)
+@click.pass_context
+def doctor_estate(
+    ctx: click.Context,
+    manifest: Optional[Path],
+    user_homes: tuple[Path, ...],
+    identity_roots: tuple[Path, ...],
+    syncthing_configs: tuple[Path, ...],
+    include_gpg: bool,
+    evidence: Optional[Path],
+    json_out: bool,
+) -> None:
+    """Find legacy, retired, conflicted, or unsafely synced key copies.
+
+    The command is read-only except when --evidence is supplied. It classifies
+    fingerprints using an authoritative version-1 estate manifest, checks
+    encrypted-quarantine evidence for retired keys, discovers alternate user
+    homes, scans identity files and GnuPG keyrings, and verifies the ignore
+    policy at every relevant Syncthing folder root. Secret bytes are never
+    emitted.
+    """
+    import json as _json
+
+    from . import resolve_capauth_home
+    from .estate import audit_estate, format_estate_report, write_evidence
+
+    homes = list(user_homes) or [Path.home()]
+    capauth_home = resolve_capauth_home(ctx.obj.get("home"))
+    manifest_path = manifest or capauth_home / "estate.json"
+    config_pairs = [(path, homes[0]) for path in syncthing_configs]
+    try:
+        report = audit_estate(
+            manifest_path,
+            user_homes=homes,
+            explicit_roots=identity_roots,
+            syncthing_configs=config_pairs,
+            include_gpg=include_gpg,
+        )
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if evidence is not None:
+        try:
+            write_evidence(report, evidence)
+        except OSError as exc:
+            raise click.ClickException(f"could not write evidence: {exc}") from exc
+    if json_out:
+        click.echo(_json.dumps(report.to_dict(), indent=2))
+    else:
+        click.echo(format_estate_report(report))
+        if evidence is not None:
+            click.echo(f"evidence: {evidence}")
+    raise SystemExit(report.exit_code)

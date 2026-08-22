@@ -71,20 +71,30 @@ DEFAULT_AGENTS = [
 # ---------------------------------------------------------------------------
 
 
-def _load_cluster() -> dict:
-    """Return cluster.json contents or a safe default."""
+def _load_cluster() -> dict | None:
+    """Return cluster.json contents, or None when absent/unreadable.
+
+    No fabricated default: inventing an operator/realm here once wrote
+    ``<agent>@chef.skworld`` FQIDs into identity.json on hosts that were
+    never part of that cluster. Callers must tolerate None (fqid omitted).
+    """
     for p in [Path("/etc/skcapstone/cluster.json"), SKCAPSTONE_HOME / "cluster.json"]:
         if p.exists():
             try:
                 return json.loads(p.read_text(encoding="utf-8"))
             except Exception:
                 pass
-    return {"realm": "skworld", "operator": "chef"}
+    return None
 
 
-def _build_fqid(agent: str, cluster: dict) -> str:
-    realm = cluster.get("realm", "skworld")
-    operator = cluster.get("operator", "chef")
+def _build_fqid(agent: str, cluster: dict | None) -> str | None:
+    """Build ``<agent>@<operator>.<realm>``, or None without cluster data."""
+    if not cluster:
+        return None
+    realm = cluster.get("realm")
+    operator = cluster.get("operator")
+    if not realm or not operator:
+        return None
     return f"{agent}@{operator}.{realm}"
 
 
@@ -129,11 +139,16 @@ def _update_identity_json(
     identity_path: Path,
     agent: str,
     capauth_uri: str,
-    fqid: str,
+    fqid: str | None,
     fingerprint: str | None,
     dry_run: bool,
 ) -> None:
-    """Write or merge dual-URI fields into identity.json."""
+    """Write or merge dual-URI fields into identity.json.
+
+    ``fqid`` is written only when resolvable from cluster.json; when the
+    cluster is unknown it is left untouched rather than overwritten with a
+    fabricated or null value.
+    """
     existing: dict = {}
     if identity_path.exists():
         try:
@@ -144,7 +159,8 @@ def _update_identity_json(
     updated = dict(existing)
     # Always set these canonical fields
     updated["capauth_uri"] = capauth_uri
-    updated["fqid"] = fqid
+    if fqid is not None:
+        updated["fqid"] = fqid
     if fingerprint:
         updated["fingerprint"] = fingerprint
     # Ensure core fields are present

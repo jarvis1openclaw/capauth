@@ -1,8 +1,9 @@
-"""Syncthing-based identity sync for CapAuth.
+"""Syncthing-based public identity distribution for CapAuth.
 
-Shares ~/.capauth/ across cluster nodes via Syncthing so all nodes
-share a single sovereign identity. This is the "Option 2" deployment
-model where one PGP keypair is replicated everywhere.
+Shares public profile material across cluster nodes while keeping private keys,
+revocation certificates, keystores, backups, and passphrase files local. A
+single private signer replicated to every node creates an unnecessarily broad
+blast radius; service and node identities should be provisioned separately.
 
 Usage:
     from capauth.sync import setup_syncthing_sync, is_sync_configured
@@ -28,6 +29,20 @@ logger = logging.getLogger(__name__)
 
 FOLDER_ID = "capauth-identity"
 FOLDER_LABEL = ".capauth"
+
+# These rules live at the configured Syncthing folder root. The first two are
+# the minimum policy enforced by capauth doctor estate; the others prevent
+# common custody and runtime-secret files from being added later.
+REQUIRED_SECRET_IGNORE_RULES = (
+    "**/private.*",
+    "**/root-revocation.asc",
+    "**/*.passphrase",
+    "**/passphrase.*",
+    "**/*.env",
+    "**/*.db",
+    "**/*.db-*",
+    "**/backups/",
+)
 
 # Syncthing config locations (in priority order)
 _CONFIG_PATHS = [
@@ -100,6 +115,48 @@ def is_sync_configured() -> bool:
     return False
 
 
+def ensure_secret_material_ignored(capauth_dir: Path) -> Path:
+    """Enforce secret-material exclusions at the actual Syncthing root.
+
+    Existing user rules and comments are preserved. Only missing required
+    rules are appended, using an atomic replace so a partial write cannot
+    silently remove a protection.
+
+    Returns:
+        The .stignore path.
+    """
+    root = Path(capauth_dir).expanduser()
+    root.mkdir(parents=True, exist_ok=True)
+    ignore_path = root / ".stignore"
+    try:
+        existing = ignore_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        existing = ""
+    active = {
+        line.strip()
+        for line in existing.splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", "!"))
+    }
+    missing = [rule for rule in REQUIRED_SECRET_IGNORE_RULES if rule not in active]
+    if not missing:
+        return ignore_path
+
+    content = existing.rstrip()
+    if content:
+        content += "\n\n"
+    content += "# CapAuth custody boundary: never replicate secret material\n"
+    content += "\n".join(missing) + "\n"
+    temporary = ignore_path.with_name(f".{ignore_path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        temporary.chmod(0o600)
+        temporary.replace(ignore_path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return ignore_path
+
+
 def get_known_devices() -> list[dict]:
     """Return all Syncthing devices from config.xml.
 
@@ -129,10 +186,11 @@ def setup_syncthing_sync(
     capauth_dir: Optional[Path] = None,
     device_ids: Optional[list[str]] = None,
 ) -> bool:
-    """Add ~/.capauth/ as a Syncthing shared folder.
+    """Add the CapAuth home as a public-material Syncthing folder.
 
     If the Syncthing REST API is reachable, uses it. Otherwise falls
-    back to editing config.xml directly.
+    back to editing config.xml directly. Required secret exclusions are written
+    before the folder is registered; setup fails closed if that cannot be done.
 
     Args:
         capauth_dir: Path to the capauth home (default ~/.capauth/).
@@ -143,6 +201,12 @@ def setup_syncthing_sync(
         True if the folder was added successfully.
     """
     capauth_path = resolve_capauth_home(capauth_dir)
+
+    try:
+        ensure_secret_material_ignored(capauth_path)
+    except OSError as exc:
+        logger.warning("Cannot enforce CapAuth Syncthing custody boundary: %s", exc)
+        return False
 
     # Create .stfolder marker so Syncthing recognizes it
     (capauth_path / ".stfolder").touch(exist_ok=True)
